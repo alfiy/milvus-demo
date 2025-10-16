@@ -1,0 +1,13 @@
+streamlit
+pymilvus
+sentence-transformers
+numpy
+pandas
+scikit-learn
+plotly
+jieba
+matplotlib
+seaborn
+umap-learn
+torch
+transformers
