@@ -1,0 +1,23 @@
+{
+  "milvus": {
+    "host": "192.168.60.121",
+    "port": "19530",
+    "user": "",
+    "password": "",
+    "collection_name": "text_vectors",
+    "auto_connect": true
+  },
+  "mongodb": {
+    "host": "localhost",
+    "port": 27017,
+    "username": "test",
+    "password": "password",
+    "db_name": "textdb",
+    "col_name": "metadata",
+    "auto_connect": false
+  },
+  "model": {
+    "last_used_model": "models--sentence-transformers--all-MiniLM-L6-v2",
+    "auto_load": true
+  }
+}

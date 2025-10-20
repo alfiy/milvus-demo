@@ -5,62 +5,152 @@ import os
 from typing import List, Dict, Any
 import torch
 import json
+import subprocess
+
 
 class VectorProcessor:
-    def __init__(self):
+    def __init__(self, user_model_dir="./hf_embedding_cache"):
         """
-        初始化向量处理器，使用本地缓存的模型
+        初始化向量处理器，支持用户动态添加本地嵌入模型，并自动扫描本地模型目录。
         """
         self.model = None
-        self.model_name = "paraphrase-multilingual-MiniLM-L12-v2"
-        self.dimension = 384  # 该模型的向量维度
-        
-        # 设置本地缓存路径
-        self.cache_dir = os.path.expanduser("~/.cache/huggingface/transformers")
+        self.model_name = None
+        self.dimension = None
+        self.user_model_dir = user_model_dir
+        self.available_models = self.scan_local_models()
+        self.model_select_idx = 0  # 默认选中第一个
 
+    def scan_local_models(self):
+        """
+        扫描本地模型目录，返回所有模型名称列表
+        """
+        models = []
+        if os.path.isdir(self.user_model_dir):
+            for entry in os.listdir(self.user_model_dir):
+                full_path = os.path.join(self.user_model_dir, entry)
+                if os.path.isdir(full_path):
+                    models.append(entry)
+        return models
+
+    def _ping_huggingface(self):
+        """
+        使用 curl 命令判断是否能连接 huggingface.co
+        """
+        try:
+            # -I 只请求头，--connect-timeout 3 最多等3秒
+            curl_cmd = ["curl", "-I", "--connect-timeout", "3", "https://huggingface.co"]
+            result = subprocess.run(curl_cmd, stdout=subprocess.PIPE, stderr=subprocess.PIPE)
+            # 只要 exit code 为 0 且返回有 HTTP 状态行即认为可访问
+            if result.returncode == 0 and b"HTTP" in result.stdout:
+                return True
+            else:
+                return False
+        except Exception:
+            return False
+
+
+    def _download_model(self, model_name):
+        """
+        使用 huggingface-cli 下载模型到本地 embedding cache 目录。
+        支持用户直接输入完整模型名称（如 sentence-transformers/paraphrase-multilingual-MiniLM-L12-v2、Qwen/Qwen3-Embedding-4B、BAAI/bge-m3 等）。
+        """
+        st.info(f"🌐 正在尝试下载模型: {model_name} 到 {self.user_model_dir}")
+        os.makedirs(self.user_model_dir, exist_ok=True)
+        try:
+            # 用户输入的 model_name 应为完整的 huggingface 仓库名（如 Qwen/Qwen3-Embedding-4B）
+            cmd = [
+                "huggingface-cli", "download",
+                model_name,
+                "--cache-dir", self.user_model_dir
+            ]
+            st.info(f"执行命令: {' '.join(cmd)}")
+            result = subprocess.run(cmd, capture_output=True, text=True)
+            if result.returncode == 0:
+                st.success("✅ 模型已成功下载到本地缓存目录")
+                return True
+            else:
+                st.error(f"❌ 模型下载失败: {result.stderr}")
+                return False
+        except Exception as e:
+            st.error(f"❌ 模型下载模型异常: {e}")
+            return False
+
+
+    def select_and_add_model_ui(self):
+        """
+        展示添加嵌入模型输入框和模型选择下拉框，返回用户选择的模型名
+        """
+        st.markdown("### 1. 添加或选择本地嵌入模型")
+        st.info(f"请将 HuggingFace SentenceTransformer 格式的模型文件夹放置于 `{self.user_model_dir}/模型名`，或在下方输入模型名称自动下载。")
+
+        # 输入框：允许用户添加新模型名
+        new_model_name = st.text_input("添加或下载新模型（输入模型名称，如 paraphrase-multilingual-MiniLM-L12-v2 ）", value="")
+
+        # 下载新模型逻辑
+        if new_model_name:
+            if new_model_name not in self.available_models:
+                # 下载前先ping huggingface
+                if self._ping_huggingface():
+                    st.info("HuggingFace 官网可达，正在自动下载模型。")
+                    download_success = self._download_model(new_model_name)
+                    if download_success:
+                        # 刷新模型列表，自动选中新模型
+                        self.available_models = self.scan_local_models()
+                        if new_model_name in self.available_models:
+                            self.model_select_idx = self.available_models.index(new_model_name)
+                            st.success(f"已添加新模型: {new_model_name}，无需再次下载。")
+                else:
+                    st.error("❌ 无法访问 huggingface.co，无法自动下载模型。请手动将模型文件夹放置到本地，并在下拉框中选择。")
+                    st.info(f"你可以用命令/huggingface-cli离线下载模型，然后将其解压到 {self.user_model_dir}/{new_model_name}")
+        # 下拉框：选择可用模型
+        if self.available_models:
+            selected = st.selectbox(
+                "选择本地嵌入模型",
+                options=self.available_models,
+                index=self.model_select_idx,
+                key="embedding_model_select"
+            )
+            self.model_name = selected
+            st.info(f"当前选中模型: {selected}，路径: {os.path.join(self.user_model_dir, selected)}")
+        else:
+            st.warning(f"本地模型库 `{self.user_model_dir}` 为空，请添加模型或先下载！")
+            self.model_name = None
 
     def load_model(self) -> bool:
         """
-        加载预训练的句子转换模型，自动优先使用本地缓存，无需手动检测缓存
+        加载实际 snapshot 子目录下的模型
         """
+        if not self.model_name:
+            st.error("❌ 未选中模型，请先添加/选择本地嵌入模型。")
+            return False
+
+        # 1. 自动找到 snapshot 目录
+        base_dir = os.path.join(self.user_model_dir, self.model_name, "snapshots")
+        if not os.path.isdir(base_dir):
+            st.error(f"❌ 本地模型目录缺失的 snapshots 目录: {base_dir}")
+            return False
+        snapshot_dirs = [d for d in os.listdir(base_dir) if os.path.isdir(os.path.join(base_dir, d))]
+        if not snapshot_dirs:
+            st.error(f"❌ 没有找到任何 snapshot 子目录，请检查模型下载是否完整！")
+            return False
+        model_path = os.path.join(base_dir, snapshot_dirs[0])
+        st.info(f"正在加载模型目录: {model_path}")
+
+        device = "cuda" if torch.cuda.is_available() else "cpu"
         try:
-            st.info(" 正在加载文本向量化模型...")
-            device = "cuda" if torch.cuda.is_available() else "cpu"
-            st.info(f"️ 使用设备: {device}")
-
-            # 直接加载模型，Huggingface会自动使用缓存
-            self.model = SentenceTransformer(
-                self.model_name,
-                cache_folder=self.cache_dir,
-                device=device
-            )
-            st.success("✅ 模型加载成功")
-
-            # 验证模型
-            test_text = "测试文本"
-            test_vector = self.model.encode([test_text])
-            if test_vector.shape[1] == self.dimension:
-                st.success(f"📊 模型维度: {self.dimension} | 描述: 支持多语言，384维向量，平衡性能与质量")
+            self.model = SentenceTransformer(model_path, device=device)
+            test_vector = self.model.encode(["测试文本"])
+            if len(test_vector.shape) == 2:
+                self.dimension = test_vector.shape[1]
+                st.success(f"✅ 模型加载成功，向量维度: {self.dimension}")
                 return True
             else:
-                st.error(f"❌ 模型维度不匹配: 期望{self.dimension}，实际{test_vector.shape[1]}")
+                st.error(f"❌ 模型输出维度异常: {test_vector.shape}")
                 return False
-
         except Exception as e:
             st.error(f"❌ 模型加载失败: {e}")
-            # 尝试备用模型
-            st.info(" 尝试使用备用模型...")
-            try:
-                backup_model = "all-MiniLM-L6-v2"
-                self.model = SentenceTransformer(backup_model, device=device)
-                self.dimension = 384
-                st.warning(f"⚠️ 使用备用模型: {backup_model}")
-                return True
-            except Exception as backup_e:
-                st.error(f"❌ 备用模型加载失败: {backup_e}")
-                return False
+            return False
 
-    
     def preprocess_text(self, text: str) -> str:
         """
         文本预处理
@@ -238,10 +328,18 @@ class VectorProcessor:
             'dimension': self.dimension,
             'device': str(self.model.device),
             'max_seq_length': getattr(self.model, 'max_seq_length', 'Unknown'),
-            'cache_dir': self.cache_dir,
+            'cache_dir': self.user_model_dir,
             'embedding_dimension': self.model.get_sentence_embedding_dimension()
         }
     
+    def encode(self, texts):
+        """
+        对输入文本列表进行向量化编码
+        """
+        if self.model is None:
+            raise ValueError("模型未加载，请先加载嵌入模型。")
+        return self.model.encode(texts)
+
     def calculate_similarity(self, vector1: np.ndarray, vector2: np.ndarray) -> float:
         """
         计算两个向量的余弦相似度

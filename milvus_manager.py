@@ -1,3 +1,4 @@
+# milvus_manager_enhanced.py
 from pymilvus import connections, Collection, CollectionSchema, FieldSchema, DataType, utility
 import numpy as np
 import streamlit as st
@@ -5,21 +6,34 @@ from typing import List, Dict, Any, Optional
 import json
 import math
 import time
+from config_manager import config_manager
 
 class MilvusManager:
-    def __init__(self, host: str = "localhost", port: str = "19530"):
+    def __init__(self, host: str = "localhost", port: str = "19530", user: str = "", password: str = ""):
         """
         初始化Milvus连接管理器
         """
-        self.host = host
-        self.port = port
-        self.collection_name = "text_vectors"
+        # 尝试从配置文件加载设置
+        saved_config = config_manager.get_milvus_config()
+        
+        self.host = host if host != "localhost" else saved_config.get("host", "localhost")
+        self.port = port if port != "19530" else saved_config.get("port", "19530")
+        self.user = user if user else saved_config.get("user", "")
+        self.password = password if password else saved_config.get("password", "")
+        self.collection_name = saved_config.get("collection_name", "text_vectors")
         self.collection = None
         self.is_connected = False
+        
+        # 如果配置了自动连接，则尝试连接
+        if saved_config.get("auto_connect", False):
+            self.connect()
     
-    def connect(self) -> bool:
+    def connect(self, save_config: bool = True) -> bool:
         """
         连接到Milvus服务器并检查现有集合
+        
+        Args:
+            save_config: 是否保存连接配置
         """
         try:
             # 断开之前的连接（如果存在）
@@ -28,13 +42,35 @@ class MilvusManager:
             except:
                 pass
             
+            # 准备连接参数
+            connect_params = {
+                "alias": "default",
+                "host": self.host,
+                "port": self.port
+            }
+            
+            # 如果提供了用户名和密码，添加认证信息
+            if self.user and self.password:
+                connect_params.update({
+                    "user": self.user,
+                    "password": self.password
+                })
+            
             # 建立新连接
-            connections.connect(
-                alias="default",
-                host=self.host,
-                port=self.port
-            )
+            connections.connect(**connect_params)
             self.is_connected = True
+            
+            # 保存连接配置
+            if save_config:
+                config_manager.update_milvus_config(
+                    host=self.host,
+                    port=self.port,
+                    user=self.user,
+                    password=self.password,
+                    collection_name=self.collection_name,
+                    auto_connect=True
+                )
+                st.success("✅ 连接配置已保存，下次启动将自动连接")
             
             # 检查是否存在现有集合
             if utility.has_collection(self.collection_name):
@@ -50,10 +86,10 @@ class MilvusManager:
                 if num_entities > 0:
                     st.info(f"🔍 发现现有集合 '{self.collection_name}'，包含 {num_entities:,} 条记录")
                 else:
-                    st.info(f"📦 发现现有集合 '{self.collection_name}'，但暂无数据")
+                    st.info(f"📝 发现现有集合 '{self.collection_name}'，但暂无数据")
             else:
                 st.success(f"✅ 成功连接到Milvus服务器 {self.host}:{self.port}")
-                st.info("📝 未发现现有集合，请创建新集合")
+                st.info("📋 未发现现有集合，请创建新集合")
             
             return True
             
@@ -61,6 +97,41 @@ class MilvusManager:
             st.error(f"❌ 连接Milvus失败: {e}")
             self.is_connected = False
             return False
+    
+    def update_connection_params(self, host: str, port: str, user: str = "", password: str = "", 
+                               collection_name: str = "text_vectors") -> None:
+        """
+        更新连接参数
+        
+        Args:
+            host: 主机地址
+            port: 端口
+            user: 用户名
+            password: 密码
+            collection_name: 集合名称
+        """
+        self.host = host
+        self.port = port
+        self.user = user
+        self.password = password
+        self.collection_name = collection_name
+    
+    def get_connection_info(self) -> Dict[str, Any]:
+        """
+        获取当前连接信息
+        
+        Returns:
+            连接信息字典
+        """
+        return {
+            "host": self.host,
+            "port": self.port,
+            "user": self.user,
+            "password": "***" if self.password else "",
+            "collection_name": self.collection_name,
+            "is_connected": self.is_connected,
+            "has_collection": self.collection is not None
+        }
     
     def create_collection(self, dimension: int = 384, description: str = "文本向量集合") -> bool:
         """
@@ -77,7 +148,7 @@ class MilvusManager:
                 stats = self.get_collection_stats()
                 num_entities = stats.get('num_entities', 0)
                 
-                st.info(f"📦 集合 '{self.collection_name}' 已存在，包含 {num_entities:,} 条记录")
+                st.info(f"📋 集合 '{self.collection_name}' 已存在，包含 {num_entities:,} 条记录")
                 return True
             
             # 创建新集合
@@ -160,7 +231,7 @@ class MilvusManager:
                 st.warning(f"⚠️ 集合中已存在 {existing_count:,} 条记录")
                 
                 # 询问用户是否继续
-                if st.button("🔄 继续添加数据", key="continue_insert"):
+                if st.button("➕ 继续添加数据", key="continue_insert"):
                     pass  # 继续执行
                 else:
                     st.info("💡 如需重新开始，请先删除现有集合")
@@ -248,7 +319,7 @@ class MilvusManager:
             
             # 等待索引构建完成
             if inserted_count > 0:
-                st.info("🔨 正在构建索引，请稍候...")
+                st.info("🔧 正在构建索引，请稍候...")
                 self.collection.load()  # 重新加载集合
             
             progress_bar.progress(1.0)
@@ -286,7 +357,7 @@ class MilvusManager:
             return False
         
         try:
-            st.info(f"🔄 正在删除 {len(record_ids)} 条记录...")
+            st.info(f"🗑️ 正在删除 {len(record_ids)} 条记录...")
             
             # 创建进度条
             progress_bar = st.progress(0)
@@ -333,7 +404,7 @@ class MilvusManager:
             return False
         
         try:
-            st.info(f"🔄 正在删除包含 '{text_pattern}' 的记录...")
+            st.info(f"🗑️ 正在删除包含 '{text_pattern}' 的记录...")
             
             # 创建进度条
             progress_bar = st.progress(0)
@@ -375,6 +446,7 @@ class MilvusManager:
                 progress_bar.empty()
             if 'status_text' in locals():
                 status_text.empty()
+    
     def clear_all_data(self) -> bool:
         """
         清空集合中的所有数据，推荐通过删除集合后重新创建来保证数据彻底清空
@@ -384,7 +456,7 @@ class MilvusManager:
             return False
 
         try:
-            st.info(f" 正在删除集合 '{self.collection_name}'，以清空所有数据...")
+            st.info(f"🗑️ 正在删除集合 '{self.collection_name}'，以清空所有数据...")
             
             # 释放集合资源
             self.collection.release()
@@ -407,110 +479,6 @@ class MilvusManager:
             st.error(f"❌ 清空数据失败: {e}")
             return False
 
-    
-    # def clear_all_data(self) -> bool:
-    #     """
-    #     清空集合中的所有数据，带进度条显示
-    #     """
-    #     if not self.collection:
-    #         st.error("❌ 集合未初始化")
-    #         return False
-        
-    #     try:
-    #         # 创建进度条和状态显示
-    #         progress_bar = st.progress(0)
-    #         status_text = st.empty()
-            
-    #         status_text.text("📊 正在获取当前数据统计...")
-    #         progress_bar.progress(0.1)
-            
-    #         # 获取当前记录数
-    #         stats = self.get_collection_stats()
-    #         num_entities = stats.get('num_entities', 0)
-            
-    #         if num_entities == 0:
-    #             progress_bar.progress(1.0)
-    #             status_text.text("✅ 集合已为空")
-    #             st.info("ℹ️ 集合中没有数据需要清空")
-    #             return True
-            
-    #         st.info(f"🔄 开始清空数据，当前记录数: {num_entities:,}")
-            
-    #         status_text.text("🗑️ 正在执行批量删除操作...")
-    #         progress_bar.progress(0.3)
-            
-    #         # 尝试分批删除以避免超时
-    #         batch_size = 10000  # 每批删除10000条
-    #         total_batches = math.ceil(num_entities / batch_size)
-            
-    #         if total_batches > 1:
-    #             st.info(f"📦 数据量较大，将分 {total_batches} 批次删除")
-                
-    #             for batch in range(total_batches):
-    #                 try:
-    #                     # 删除当前批次
-    #                     expr = f"id >= 0"  # 删除所有记录
-    #                     self.collection.delete(expr)
-                        
-    #                     # 更新进度
-    #                     batch_progress = 0.3 + (batch + 1) / total_batches * 0.5
-    #                     progress_bar.progress(batch_progress)
-    #                     status_text.text(f"🗑️ 正在删除第 {batch + 1}/{total_batches} 批数据...")
-                        
-    #                     # 短暂暂停避免系统过载
-    #                     time.sleep(0.1)
-                        
-    #                 except Exception as batch_error:
-    #                     st.warning(f"⚠️ 第 {batch + 1} 批删除遇到问题: {batch_error}")
-    #                     continue
-    #         else:
-    #             # 数据量较小，直接删除
-    #             expr = "id >= 0"
-    #             self.collection.delete(expr)
-    #             progress_bar.progress(0.8)
-            
-    #         status_text.text("💾 正在刷新数据到磁盘...")
-    #         progress_bar.progress(0.9)
-            
-    #         # 刷新数据，确保删除操作持久化
-    #         self.collection.flush()
-            
-    #         # 等待一小段时间让删除操作完全生效
-    #         time.sleep(1)
-            
-    #         status_text.text("🔍 正在验证删除结果...")
-    #         progress_bar.progress(0.95)
-            
-    #         # 验证删除结果
-    #         final_stats = self.get_collection_stats()
-    #         final_count = final_stats.get('num_entities', 0)
-            
-    #         progress_bar.progress(1.0)
-            
-    #         if final_count == 0:
-    #             status_text.text("✅ 数据清空完成")
-    #             st.success(f"✅ 成功清空集合，删除了 {num_entities:,} 条记录")
-    #             return True
-    #         else:
-    #             status_text.text(f"⚠️ 部分数据未删除，剩余 {final_count:,} 条")
-    #             st.warning(f"⚠️ 部分数据可能未删除，剩余 {final_count:,} 条记录")
-                
-    #             # 提供重试选项
-    #             if st.button("🔄 重试清空", key="retry_clear"):
-    #                 return self.clear_all_data()
-                
-    #             return False
-                
-    #     except Exception as e:
-    #         st.error(f"❌ 清空数据失败: {e}")
-    #         return False
-    #     finally:
-    #         # 清理进度显示
-    #         if 'progress_bar' in locals():
-    #             progress_bar.empty()
-    #         if 'status_text' in locals():
-    #             status_text.empty()
-    
     def get_sample_records(self, limit: int = 10) -> List[Dict]:
         """
         获取样本记录用于预览和选择删除
