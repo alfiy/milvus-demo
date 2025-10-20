@@ -8,13 +8,13 @@
     "auto_connect": true
   },
   "mongodb": {
-    "host": "localhost",
+    "host": "192.168.60.121",
     "port": 27017,
     "username": "test",
     "password": "password",
     "db_name": "textdb",
     "col_name": "metadata",
-    "auto_connect": false
+    "auto_connect": true
   },
   "model": {
     "last_used_model": "models--sentence-transformers--all-MiniLM-L6-v2",

@@ -28,6 +28,53 @@ class MilvusManager:
         if saved_config.get("auto_connect", False):
             self.connect()
     
+    def _collection_exists_and_valid(self) -> bool:
+        """
+        检查集合是否存在且有效
+        """
+        try:
+            if not self.is_connected:
+                return False
+            
+            if not utility.has_collection(self.collection_name):
+                return False
+            
+            # 尝试访问集合以验证其有效性
+            test_collection = Collection(self.collection_name)
+            _ = test_collection.num_entities  # 这会触发错误如果集合无效
+            return True
+            
+        except Exception as e:
+            # 如果集合无效，清理引用
+            self.collection = None
+            return False
+    
+    def _safe_collection_operation(self, operation_func, *args, **kwargs):
+        """
+        安全执行集合操作，自动处理集合不存在的情况
+        """
+        try:
+            # 检查集合是否存在且有效
+            if not self._collection_exists_and_valid():
+                st.error("❌ 集合不存在或已失效，请重新创建集合")
+                return None
+            
+            # 确保self.collection引用是最新的
+            if not self.collection or self.collection.name != self.collection_name:
+                self.collection = Collection(self.collection_name)
+            
+            return operation_func(*args, **kwargs)
+            
+        except Exception as e:
+            error_msg = str(e).lower()
+            if "collection not found" in error_msg or "not exist" in error_msg:
+                st.error(f"❌ 集合 '{self.collection_name}' 不存在或已被删除")
+                self.collection = None
+                st.info("💡 请重新创建集合或检查集合名称")
+            else:
+                st.error(f"❌ 操作失败: {e}")
+            return None
+    
     def connect(self, save_config: bool = True) -> bool:
         """
         连接到Milvus服务器并检查现有集合
@@ -73,7 +120,7 @@ class MilvusManager:
                 st.success("✅ 连接配置已保存，下次启动将自动连接")
             
             # 检查是否存在现有集合
-            if utility.has_collection(self.collection_name):
+            if self._collection_exists_and_valid():
                 self.collection = Collection(self.collection_name)
                 # 加载集合到内存
                 self.collection.load()
@@ -130,7 +177,7 @@ class MilvusManager:
             "password": "***" if self.password else "",
             "collection_name": self.collection_name,
             "is_connected": self.is_connected,
-            "has_collection": self.collection is not None
+            "has_collection": self._collection_exists_and_valid()
         }
     
     def create_collection(self, dimension: int = 384, description: str = "文本向量集合") -> bool:
@@ -139,7 +186,7 @@ class MilvusManager:
         """
         try:
             # 检查集合是否已存在
-            if utility.has_collection(self.collection_name):
+            if self._collection_exists_and_valid():
                 self.collection = Collection(self.collection_name)
                 # 确保集合已加载
                 self.collection.load()
@@ -216,11 +263,11 @@ class MilvusManager:
         """
         分批插入向量数据，确保数据持久化
         """
-        if not self.collection:
-            st.error("❌ 集合未初始化")
-            return False
-        
-        try:
+        def _insert_operation():
+            if not self.collection:
+                st.error("❌ 集合未初始化")
+                return False
+            
             total_records = len(texts)
             
             # 检查是否有重复数据（简单检查）
@@ -337,26 +384,15 @@ class MilvusManager:
             else:
                 st.error("❌ 没有成功插入任何记录")
                 return False
-                
-        except Exception as e:
-            st.error(f"❌ 插入数据失败: {e}")
-            return False
-        finally:
-            # 清理进度显示
-            if 'progress_bar' in locals():
-                progress_bar.empty()
-            if 'status_text' in locals():
-                status_text.empty()
+        
+        # 使用安全操作包装器
+        return self._safe_collection_operation(_insert_operation) or False
     
     def delete_records_by_ids(self, record_ids: List[int]) -> bool:
         """
         根据ID删除指定记录
         """
-        if not self.collection:
-            st.error("❌ 集合未初始化")
-            return False
-        
-        try:
+        def _delete_operation():
             st.info(f"🗑️ 正在删除 {len(record_ids)} 条记录...")
             
             # 创建进度条
@@ -384,26 +420,14 @@ class MilvusManager:
             
             st.success(f"✅ 成功删除 {len(record_ids)} 条记录")
             return True
-            
-        except Exception as e:
-            st.error(f"❌ 删除记录失败: {e}")
-            return False
-        finally:
-            # 清理进度显示
-            if 'progress_bar' in locals():
-                progress_bar.empty()
-            if 'status_text' in locals():
-                status_text.empty()
+        
+        return self._safe_collection_operation(_delete_operation) or False
     
     def delete_records_by_text_pattern(self, text_pattern: str, exact_match: bool = False) -> bool:
         """
         根据文本模式删除记录
         """
-        if not self.collection:
-            st.error("❌ 集合未初始化")
-            return False
-        
-        try:
+        def _delete_operation():
             st.info(f"🗑️ 正在删除包含 '{text_pattern}' 的记录...")
             
             # 创建进度条
@@ -436,26 +460,14 @@ class MilvusManager:
             
             st.success(f"✅ 成功删除包含 '{text_pattern}' 的记录")
             return True
-            
-        except Exception as e:
-            st.error(f"❌ 删除记录失败: {e}")
-            return False
-        finally:
-            # 清理进度显示
-            if 'progress_bar' in locals():
-                progress_bar.empty()
-            if 'status_text' in locals():
-                status_text.empty()
+        
+        return self._safe_collection_operation(_delete_operation) or False
     
     def clear_all_data(self) -> bool:
         """
         清空集合中的所有数据，推荐通过删除集合后重新创建来保证数据彻底清空
         """
-        if not self.collection:
-            st.error("❌ 集合未初始化")
-            return False
-
-        try:
+        def _clear_operation():
             st.info(f"🗑️ 正在删除集合 '{self.collection_name}'，以清空所有数据...")
             
             # 释放集合资源
@@ -474,20 +486,14 @@ class MilvusManager:
             else:
                 st.error("❌ 重新创建集合失败")
                 return False
-
-        except Exception as e:
-            st.error(f"❌ 清空数据失败: {e}")
-            return False
-
+        
+        return self._safe_collection_operation(_clear_operation) or False
+    
     def get_sample_records(self, limit: int = 10) -> List[Dict]:
         """
         获取样本记录用于预览和选择删除
         """
-        if not self.collection:
-            st.error("❌ 集合未初始化")
-            return []
-        
-        try:
+        def _get_samples():
             # 确保集合已加载
             self.collection.load()
             
@@ -514,20 +520,15 @@ class MilvusManager:
                 })
             
             return records
-            
-        except Exception as e:
-            st.error(f"❌ 获取样本记录失败: {e}")
-            return []
+        
+        result = self._safe_collection_operation(_get_samples)
+        return result if result is not None else []
     
     def search_records_by_text(self, search_text: str, limit: int = 50) -> List[Dict]:
         """
         根据文本内容搜索记录
         """
-        if not self.collection:
-            st.error("❌ 集合未初始化")
-            return []
-        
-        try:
+        def _search_text():
             # 确保集合已加载
             self.collection.load()
             
@@ -556,20 +557,15 @@ class MilvusManager:
                 })
             
             return records
-            
-        except Exception as e:
-            st.error(f"❌ 搜索记录失败: {e}")
-            return []
+        
+        result = self._safe_collection_operation(_search_text)
+        return result if result is not None else []
     
     def search_similar(self, query_vector: np.ndarray, top_k: int = 10) -> List[Dict]:
         """
         搜索相似向量
         """
-        if not self.collection:
-            st.error("❌ 集合未初始化")
-            return []
-        
-        try:
+        def _search_similar():
             # 确保集合已加载到内存
             self.collection.load()
             
@@ -601,19 +597,15 @@ class MilvusManager:
                     })
             
             return similar_texts
-            
-        except Exception as e:
-            st.error(f"❌ 搜索失败: {e}")
-            return []
+        
+        result = self._safe_collection_operation(_search_similar)
+        return result if result is not None else []
     
     def get_collection_stats(self) -> Dict[str, Any]:
         """
         获取集合统计信息
         """
-        if not self.collection:
-            return {}
-        
-        try:
+        def _get_stats():
             # 确保集合已加载
             self.collection.load()
             
@@ -627,9 +619,9 @@ class MilvusManager:
                 'is_loaded': True
             }
             return stats
-        except Exception as e:
-            st.error(f"❌ 获取统计信息失败: {e}")
-            return {}
+        
+        result = self._safe_collection_operation(_get_stats)
+        return result if result is not None else {}
     
     def delete_collection(self) -> bool:
         """
@@ -639,7 +631,10 @@ class MilvusManager:
             if utility.has_collection(self.collection_name):
                 # 先释放集合
                 if self.collection:
-                    self.collection.release()
+                    try:
+                        self.collection.release()
+                    except:
+                        pass  # 忽略释放错误
                 
                 # 删除集合
                 utility.drop_collection(self.collection_name)
@@ -648,9 +643,12 @@ class MilvusManager:
                 return True
             else:
                 st.info("ℹ️ 集合不存在")
+                self.collection = None
                 return True
         except Exception as e:
             st.error(f"❌ 删除集合失败: {e}")
+            # 即使删除失败，也清理本地引用
+            self.collection = None
             return False
     
     def disconnect(self):
@@ -659,9 +657,13 @@ class MilvusManager:
         """
         try:
             if self.collection:
-                self.collection.release()
+                try:
+                    self.collection.release()
+                except:
+                    pass  # 忽略释放错误
             connections.disconnect("default")
             self.is_connected = False
+            self.collection = None
             st.info("🔌 已断开Milvus连接")
         except Exception as e:
             st.error(f"❌ 断开连接失败: {e}")

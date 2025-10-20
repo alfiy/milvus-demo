@@ -1,4 +1,4 @@
-# app_enhanced.py
+# app_enhanced.py - 修复版本
 import streamlit as st
 import json
 import numpy as np
@@ -9,7 +9,8 @@ from vector_processor import VectorProcessor
 from milvus_manager import MilvusManager
 from clustering_analyzer import ClusteringAnalyzer
 from search_engine import SearchEngine
-from milvus_mongo_insert import milvus_mongo_upload,get_milvus_collection,get_mongo_collection
+# 使用修复后的模块
+from milvus_mongo_insert import milvus_mongo_upload, get_milvus_collection, get_mongo_collection, debug_collection_info
 from pymongo import MongoClient
 from pymilvus import connections, Collection
 from config_manager import config_manager
@@ -82,6 +83,13 @@ st.markdown("""
         border-left: 4px solid #2196f3;
         margin: 1rem 0;
     }
+    .model-card {
+        background: #f3e5f5;
+        padding: 1rem;
+        border-radius: 8px;
+        border-left: 4px solid #9c27b0;
+        margin: 1rem 0;
+    }
 </style>
 """, unsafe_allow_html=True)
 
@@ -103,12 +111,68 @@ def init_components():
         'search_engine': SearchEngine()
     }
 
+def check_and_load_model_on_startup():
+    """检查并在启动时自动加载模型"""
+    model_config = config_manager.get_model_config()
+    if model_config.get("auto_load", False) and model_config.get("last_used_model"):
+        vp = st.session_state.components['vector_processor']
+        if not st.session_state.get('model_loaded', False):
+            # 设置模型名称
+            vp.model_name = model_config.get("last_used_model")
+            # 尝试加载模型
+            if vp.load_model():
+                st.session_state.model_loaded = True
+                return True
+    return False
+
+def check_and_connect_mongodb_on_startup():
+    """检查并在启动时自动连接MongoDB"""
+    mongodb_config = config_manager.get_mongodb_config()
+    if mongodb_config.get("auto_connect", False) and mongodb_config.get("host"):
+        if "mongodb_config" not in st.session_state or not st.session_state.get("mongodb_client"):
+            try:
+                # 初始化配置
+                st.session_state.mongodb_config = {
+                    "host": mongodb_config.get("host", "localhost"),
+                    "port": mongodb_config.get("port", 27017),
+                    "username": mongodb_config.get("username", ""),
+                    "password": mongodb_config.get("password", ""),
+                    "db_name": mongodb_config.get("db_name", "textdb"),
+                    "col_name": mongodb_config.get("col_name", "metadata"),
+                    "connected": False,
+                    "error": ""
+                }
+                
+                # 尝试连接
+                config = st.session_state.mongodb_config
+                if config["username"] and config["password"]:
+                    uri = f"mongodb://{config['username']}:{config['password']}@{config['host']}:{config['port']}/{config['db_name']}?authSource=admin"
+                else:
+                    uri = f"mongodb://{config['host']}:{config['port']}/"
+                
+                client = MongoClient(uri, serverSelectionTimeoutMS=3000)
+                # 测试连接
+                db = client[config["db_name"]]
+                col = db[config["col_name"]]
+                _ = col.estimated_document_count()
+                
+                # 连接成功
+                st.session_state.mongodb_config["connected"] = True
+                st.session_state.mongodb_client = client
+                return True
+                
+            except Exception as e:
+                st.session_state.mongodb_config["error"] = str(e)
+                st.session_state.mongodb_client = None
+                return False
+    return False
+
 def config_management_page():
     """配置管理页面"""
     st.markdown("## ⚙️ 系统配置管理")
     
     # 显示当前配置状态
-    st.markdown("### 📋 当前配置状态")
+    st.markdown("### 📊 当前配置状态")
     
     # 获取当前配置
     current_config = config_manager.load_config()
@@ -148,19 +212,19 @@ def config_management_page():
     col1, col2, col3, col4 = st.columns(4)
     
     with col1:
-        if st.button("📥 导入配置", use_container_width=True):
+        if st.button("📥 导入配置", width="stretch"):
             st.session_state.show_import = True
     
     with col2:
-        if st.button("📤 导出配置", use_container_width=True):
+        if st.button("📤 导出配置", width="stretch"):
             st.session_state.show_export = True
     
     with col3:
-        if st.button("🔄 重置配置", use_container_width=True):
+        if st.button("🔄 重置配置", width="stretch"):
             st.session_state.show_reset = True
     
     with col4:
-        if st.button("🔄 重新加载", use_container_width=True):
+        if st.button("🔃 重新加载", width="stretch"):
             st.rerun()
     
     # 导入配置
@@ -255,43 +319,163 @@ def config_management_page():
         st.json(current_config)
 
 def model_manager_page():
-    st.markdown("## 🔥 嵌入模型管理")
+    st.markdown("## 🤖 嵌入模型管理")
+    
     if 'vector_processor' not in st.session_state.components:
         st.session_state.components['vector_processor'] = VectorProcessor()
     vp = st.session_state.components['vector_processor']
 
-    st.markdown("### 添加/下载嵌入模型")
-    vp.select_and_add_model_ui()
+    # 显示当前模型状态
+    st.markdown("### 📊 当前模型状态")
     
-    col1, col2 = st.columns([3, 1])
+    model_config = config_manager.get_model_config()
+    current_loaded_model = model_config.get("last_used_model", "") if st.session_state.get('model_loaded', False) else ""
+    
+    col1, col2 = st.columns(2)
+    
     with col1:
-        st.info("选择模型后点击加载，系统会自动保存您的选择")
+        if current_loaded_model:
+            st.markdown(f"""
+            <div class="model-card">
+                <h4>🤖 当前加载的模型</h4>
+                <p><strong>模型名称:</strong> {current_loaded_model}</p>
+                <p><strong>加载状态:</strong> ✅ 已加载</p>
+                <p><strong>自动加载:</strong> {'✅' if model_config.get('auto_load', False) else '❌'}</p>
+            </div>
+            """, unsafe_allow_html=True)
+        else:
+            st.markdown("""
+            <div class="model-card">
+                <h4>🤖 当前模型状态</h4>
+                <p><strong>加载状态:</strong> ❌ 未加载</p>
+                <p><strong>提示:</strong> 请选择并加载模型</p>
+            </div>
+            """, unsafe_allow_html=True)
+    
     with col2:
-        if st.button("🔥 加载并检测模型", type="primary", use_container_width=True):
-            with st.spinner("正在加载/检测模型..."):
-                success = vp.load_model()
-                if success:
-                    # 保存模型配置
-                    config_manager.update_model_config(
-                        last_used_model=vp.model_name,
-                        auto_load=True
-                    )
-                    st.success("✅ 模型加载成功，配置已保存！")
-                else:
-                    st.error("❌ 模型加载失败，请检查模型目录或网络状态。")
+        # 模型信息
+        if current_loaded_model:
+            model_info = vp.get_model_info()
+            if model_info:
+                st.markdown(f"""
+                <div class="model-card">
+                    <h4>📋 模型详情</h4>
+                    <p><strong>向量维度:</strong> {model_info.get('dimension', 'N/A')}</p>
+                    <p><strong>模型类型:</strong> {model_info.get('model_type', 'Sentence Transformer')}</p>
+                </div>
+                """, unsafe_allow_html=True)
 
     st.markdown("---")
-    st.markdown("### 当前可用本地模型")
+    st.markdown("### 🛠️ 模型选择与管理")
+
+    # 显示可用模型和添加新模型功能
+    vp.select_and_add_model_ui()
+    
+    # 模型选择和加载
     if vp.available_models:
-        st.write(vp.available_models)
+        st.markdown("#### 🎯 选择并加载模型")
         
-        # 显示上次使用的模型
-        model_config = config_manager.get_model_config()
-        last_model = model_config.get("last_used_model", "")
-        if last_model:
-            st.info(f"💡 上次使用的模型: {last_model}")
+        # 从配置中获取上次使用的模型
+        last_used_model = model_config.get("last_used_model", "")
+        
+        # 设置默认选择
+        default_index = 0
+        if last_used_model and last_used_model in vp.available_models:
+            default_index = vp.available_models.index(last_used_model)
+
+        selected_model = st.selectbox(
+            "选择要加载的嵌入模型",
+            options=vp.available_models,
+            index=default_index,
+            help="选择你要用于向量化的嵌入模型"
+        )
+        
+        col1, col2, col3 = st.columns([2, 1, 1])
+        
+        with col1:
+            auto_load = st.checkbox(
+                "启动时自动加载此模型", 
+                value=model_config.get("auto_load", False),
+                help="勾选后，应用启动时会自动加载此模型"
+            )
+        
+        with col2:
+            load_button = st.button("🚀 加载模型", type="primary", width="stretch")
+        
+        with col3:
+            if current_loaded_model:
+                unload_button = st.button("🔄 卸载模型", width="stretch")
+            else:
+                unload_button = False
+        
+        # 加载模型
+        if load_button:
+            with st.spinner("正在加载模型..."):
+                # 设置选中的模型
+                vp.model_name = selected_model
+                success = vp.load_model()
+                
+                if success:
+                    # 更新全局状态
+                    st.session_state.model_loaded = True
+                    
+                    # 保存模型配置
+                    config_manager.update_model_config(
+                        last_used_model=selected_model,
+                        auto_load=auto_load
+                    )
+                    
+                    st.success("✅ 模型加载成功，配置已保存！")
+                    st.rerun()
+                else:
+                    st.session_state.model_loaded = False
+                    st.error("❌ 模型加载失败，请检查模型文件或网络状态。")
+        
+        # 卸载模型
+        if unload_button:
+            st.session_state.model_loaded = False
+            # 更新配置但不改变auto_load设置
+            config_manager.update_model_config(
+                last_used_model="",
+                auto_load=auto_load
+            )
+            st.success("✅ 模型已卸载")
+            st.rerun()
+        
+        # 更新自动加载设置（当复选框状态改变时）
+        if auto_load != model_config.get("auto_load", False):
+            config_manager.update_model_config(
+                last_used_model=model_config.get("last_used_model", ""),
+                auto_load=auto_load
+            )
+    
     else:
-        st.info("暂无本地模型，请先添加。")
+        st.warning("⚠️ 暂无可用模型，请先添加模型。")
+        st.info("💡 使用上方的模型添加功能来下载或添加本地模型。")
+    
+    # 显示所有可用模型列表
+    if vp.available_models:
+        st.markdown("---")
+        st.markdown("### 📋 所有可用模型")
+        
+        for i, model in enumerate(vp.available_models):
+            col1, col2 = st.columns([4, 1])
+            with col1:
+                status = "🟢 当前加载" if model == current_loaded_model else "⚪ 未加载"
+                st.write(f"{i+1}. **{model}** - {status}")
+            with col2:
+                if model != current_loaded_model:
+                    if st.button("⚡ 快速加载", key=f"quick_load_{i}", width="stretch"):
+                        with st.spinner(f"正在加载 {model}..."):
+                            vp.model_name = model
+                            if vp.load_model():
+                                st.session_state.model_loaded = True
+                                config_manager.update_model_config(
+                                    last_used_model=model,
+                                    auto_load=model_config.get("auto_load", False)
+                                )
+                                st.success(f"✅ {model} 加载成功！")
+                                st.rerun()
 
 def mongodb_config_page():
     st.markdown("## 🍃 MongoDB配置管理")
@@ -317,6 +501,42 @@ def mongodb_config_page():
 
     config = st.session_state.mongodb_config
 
+    # 显示当前连接状态
+    st.markdown("### 📊 当前连接状态")
+    
+    col1, col2 = st.columns(2)
+    
+    with col1:
+        if config.get("connected", False):
+            st.markdown(f"""
+            <div class="config-card">
+                <h4>✅ MongoDB 已连接</h4>
+                <p><strong>主机:</strong> {config['host']}:{config['port']}</p>
+                <p><strong>数据库:</strong> {config['db_name']}</p>
+                <p><strong>集合:</strong> {config['col_name']}</p>
+            </div>
+            """, unsafe_allow_html=True)
+        else:
+            st.markdown("""
+            <div class="config-card">
+                <h4>❌ MongoDB 未连接</h4>
+                <p>请配置连接信息并测试连接</p>
+            </div>
+            """, unsafe_allow_html=True)
+    
+    with col2:
+        auto_connect_status = "✅ 开启" if mongodb_config.get("auto_connect", False) else "❌ 关闭"
+        st.markdown(f"""
+        <div class="config-card">
+            <h4>⚙️ 配置状态</h4>
+            <p><strong>自动连接:</strong> {auto_connect_status}</p>
+            <p><strong>配置保存:</strong> {'✅ 已保存' if mongodb_config.get('host') else '❌ 未保存'}</p>
+        </div>
+        """, unsafe_allow_html=True)
+
+    st.markdown("---")
+    st.markdown("### 🔧 连接配置")
+
     col1, col2 = st.columns(2)
     with col1:
         config["host"] = st.text_input("MongoDB主机地址", value=config["host"])
@@ -332,79 +552,149 @@ def mongodb_config_page():
 
     col1, col2 = st.columns([3, 1])
     with col1:
-        st.info("测试连接成功后，配置将自动保存")
+        st.info("💡 测试连接成功后，配置将自动保存到配置文件，重启应用后可自动恢复连接")
     with col2:
-        test_button = st.button("🍃 测试连接", type="primary", use_container_width=True)
+        test_button = st.button("🔗 测试连接", type="primary", width="stretch")
 
     if test_button:
         st.session_state.mongodb_config["connected"] = False
         st.session_state.mongodb_config["error"] = ""
-        try:
-            if config["username"] and config["password"]:
-                uri = f"mongodb://{config['username']}:{config['password']}@{config['host']}:{config['port']}/{config['db_name']}?authSource=admin"
-            else:
-                uri = f"mongodb://{config['host']}:{config['port']}/"
-            client = MongoClient(uri, serverSelectionTimeoutMS=3000)
-            # 测试连接 & 读集合
-            db = client[config["db_name"]]
-            col = db[config["col_name"]]
-            _ = col.estimated_document_count()
-            st.session_state.mongodb_config["connected"] = True
-            st.session_state.mongodb_client = client
-            
-            # 保存MongoDB配置
-            config_manager.update_mongodb_config(
-                host=config["host"],
-                port=config["port"],
-                username=config["username"],
-                password=config["password"],
-                db_name=config["db_name"],
-                col_name=config["col_name"],
-                auto_connect=auto_connect
-            )
-            
-            st.success("✅ 连接成功！配置已保存，该连接对象已保存，可被其他模块自动复用。")
-        except Exception as e:
-            st.session_state.mongodb_config["error"] = str(e)
-            st.session_state.mongodb_client = None
-            st.error(f"❌ 连接失败: {e}")
+        
+        with st.spinner("正在测试MongoDB连接..."):
+            try:
+                if config["username"] and config["password"]:
+                    uri = f"mongodb://{config['username']}:{config['password']}@{config['host']}:{config['port']}/{config['db_name']}?authSource=admin"
+                else:
+                    uri = f"mongodb://{config['host']}:{config['port']}/"
+                
+                client = MongoClient(uri, serverSelectionTimeoutMS=5000)
+                # 测试连接 & 读集合
+                db = client[config["db_name"]]
+                col = db[config["col_name"]]
+                _ = col.estimated_document_count()
+                
+                # 连接成功
+                st.session_state.mongodb_config["connected"] = True
+                st.session_state.mongodb_client = client
+                
+                # 保存MongoDB配置到配置文件
+                config_manager.update_mongodb_config(
+                    host=config["host"],
+                    port=config["port"],
+                    username=config["username"],
+                    password=config["password"],
+                    db_name=config["db_name"],
+                    col_name=config["col_name"],
+                    auto_connect=auto_connect
+                )
+                
+                st.success("✅ 连接成功！配置已保存到配置文件，重启应用后可自动连接。")
+                
+            except Exception as e:
+                st.session_state.mongodb_config["error"] = str(e)
+                st.session_state.mongodb_client = None
+                st.error(f"❌ 连接失败: {e}")
+                
+                # 提供常见问题解决方案
+                st.markdown("### 🔧 常见问题解决")
+                st.markdown("""
+                **可能的原因：**
+                - MongoDB服务未启动
+                - 主机地址或端口错误
+                - 用户名密码错误
+                - 网络连接问题
+                - 防火墙阻止连接
+                
+                **解决建议：**
+                1. 检查MongoDB服务是否运行：`sudo systemctl status mongod`
+                2. 确认连接信息是否正确
+                3. 如果是本地连接，尝试使用 `127.0.0.1` 而不是 `localhost`
+                4. 检查防火墙设置
+                """)
 
-    # 显示连接状态
-    if config["connected"]:
-        st.info(f"✅ 已连接MongoDB：{config['host']}:{config['port']}，数据库：{config['db_name']}，集合：{config['col_name']}")
-    elif config["error"]:
-        st.warning(f"⚠️ 连接错误：{config['error']}")
+    # 显示连接状态详情
+    if config.get("error"):
+        st.markdown("### ❌ 连接错误详情")
+        st.error(f"错误信息：{config['error']}")
+    
+    # 连接管理操作
+    if config.get("connected", False):
+        st.markdown("---")
+        st.markdown("### 🛠️ 连接管理")
+        
+        col1, col2, col3 = st.columns(3)
+        
+        with col1:
+            if st.button("🔄 重新连接", width="stretch"):
+                st.session_state.mongodb_config["connected"] = False
+                st.session_state.mongodb_client = None
+                st.rerun()
+        
+        with col2:
+            if st.button("🧪 测试数据库", width="stretch"):
+                try:
+                    client = st.session_state.mongodb_client
+                    db = client[config["db_name"]]
+                    col = db[config["col_name"]]
+                    count = col.estimated_document_count()
+                    st.success(f"✅ 数据库连接正常，集合中有 {count:,} 条记录")
+                except Exception as e:
+                    st.error(f"❌ 数据库测试失败: {e}")
+        
+        with col3:
+            if st.button("🔌 断开连接", width="stretch"):
+                if st.session_state.mongodb_client:
+                    st.session_state.mongodb_client.close()
+                st.session_state.mongodb_config["connected"] = False
+                st.session_state.mongodb_client = None
+                st.info("✅ 已断开MongoDB连接")
+                st.rerun()
 
     st.markdown("---")
-    st.markdown("💡 连接成功后，连接对象将自动用于后续数据写入、搜索等功能。配置会自动保存，下次启动时可选择自动连接。")
+    st.markdown("### 📚 使用说明")
+    st.markdown("""
+    **配置持久化：**
+    - 连接成功后，配置会自动保存到 `config.json` 文件
+    - 重启应用时，如果启用了"自动连接"，会自动尝试连接
+    - 配置文件包含连接信息（密码会加密存储）
+    
+    **在其他功能中使用：**
+    - 搜索功能会自动使用这里配置的MongoDB连接
+    - 数据上传功能会将元数据保存到MongoDB
+    - 如果连接断开，系统会提示重新连接
+    """)
 
 # 通用获取MongoDB集合对象的函数，自动复用连接对象
 def get_shared_mongo_collection():
     config = st.session_state.get("mongodb_config", None)
     client = st.session_state.get("mongodb_client", None)
-    if config and client:
-        db = client[config["db_name"]]
-        col = db[config["col_name"]]
-        return col
+    if config and client and config.get("connected", False):
+        try:
+            db = client[config["db_name"]]
+            col = db[config["col_name"]]
+            # 测试连接是否仍然有效
+            _ = col.estimated_document_count()
+            return col
+        except Exception as e:
+            st.error(f"❌ MongoDB连接已断开: {e}")
+            st.info("💡 请到 '🍃 MongoDB配置管理' 页面重新连接")
+            return None
     else:
-        st.error("MongoDB未配置或未连接，请先在🍃 MongoDB配置管理页面完成连接。")
+        st.error("❌ MongoDB未配置或未连接，请先在 '🍃 MongoDB配置管理' 页面完成连接。")
         return None
 
 def milvus_mongo_semantic_search(query, top_k, milvus_collection, mongo_col, vector_processor):
     """
-    使用 Milvus + MongoDB 进行语义搜索
+    使用 Milvus + MongoDB 进行语义搜索 - 修复版本
     """
     try:
         # 1️⃣ 获取向量
         query_vector = vector_processor.encode([query])[0]
 
         # 2️⃣ 检查集合是否存在且已连接
-        milvus_manager = st.session_state.components['milvus_manager']
-        if not milvus_manager.collection:
+        if not milvus_collection:
             st.error("❌ Milvus 集合未初始化，请先创建集合或导入数据")
             return []
-
-        collection = milvus_manager.collection
 
         # 3️⃣ 执行 Milvus 搜索
         search_params = {
@@ -412,7 +702,7 @@ def milvus_mongo_semantic_search(query, top_k, milvus_collection, mongo_col, vec
             "params": {"nprobe": 10}
         }
 
-        results = collection.search(
+        results = milvus_collection.search(
             data=[query_vector.tolist()],
             anns_field="vector",           # ✅ 字段名改为 "vector"
             param=search_params,
@@ -461,6 +751,13 @@ def init_session_state():
         st.session_state.metadata = []
     if 'model_loaded' not in st.session_state:
         st.session_state.model_loaded = False
+    
+    # 检查并自动加载模型
+    if not st.session_state.model_loaded:
+        check_and_load_model_on_startup()
+    
+    # 检查并自动连接MongoDB
+    check_and_connect_mongodb_on_startup()
 
 def main():
     init_session_state()
@@ -475,19 +772,31 @@ def main():
     
     # 侧边栏导航
     with st.sidebar:
-        st.markdown("### 🎯 功能菜单")
+        st.markdown("### 🧭 功能菜单")
         
         # 显示当前状态
         if st.session_state.data_loaded:
             st.success(f"✅ 已加载 {len(st.session_state.texts)} 条数据")
         else:
-            st.info("📋 请先上传数据")
+            st.info("💡 请先上传数据")
         
         # 模型加载状态
         if st.session_state.model_loaded:
-            st.success("🔥 模型已加载")
+            model_config = config_manager.get_model_config()
+            current_model = model_config.get("last_used_model", "")
+            st.success("🤖 模型已加载")
+            if current_model:
+                st.caption(f"📋 {current_model}")
         else:
             st.warning("⚠️ 模型未加载")
+        
+        # MongoDB连接状态
+        mongodb_config = st.session_state.get("mongodb_config", {})
+        if mongodb_config.get("connected", False):
+            st.success("🍃 MongoDB已连接")
+            st.caption(f"🔗 {mongodb_config['host']}:{mongodb_config['port']}")
+        else:
+            st.warning("⚠️ MongoDB未连接")
         
         # Milvus连接状态和数据持久化验证
         if st.session_state.components['milvus_manager'].is_connected:
@@ -495,14 +804,14 @@ def main():
             
             # 显示连接信息
             conn_info = st.session_state.components['milvus_manager'].get_connection_info()
-            st.caption(f"📍 {conn_info['host']}:{conn_info['port']}")
+            st.caption(f"🔗 {conn_info['host']}:{conn_info['port']}")
             
             # 验证数据持久化状态
             persistence_status = st.session_state.components['milvus_manager'].verify_data_persistence()
             if persistence_status['status'] == 'success':
                 st.success(f"💾 持久化数据: {persistence_status['num_entities']:,} 条")
             elif persistence_status['status'] == 'no_collection':
-                st.info("📝 暂无持久化集合")
+                st.info("📄 暂无持久化集合")
             else:
                 st.warning("⚠️ 数据状态未知")
         else:
@@ -512,7 +821,7 @@ def main():
         
         page = st.selectbox(
             "选择功能模块",
-            ["🏠 首页概览", "⚙️ 系统配置管理", "🔥 嵌入模型管理", "📊 数据上传与处理", "🗄️ Milvus数据库管理","🍃 MongoDB配置管理", "🔍 文本搜索", "🎯 聚类分析", "ℹ️ 系统信息"],
+            ["🏠 首页概览", "⚙️ 系统配置管理", "🤖 嵌入模型管理", "📊 数据上传与处理", "🗄️ Milvus数据库管理","🍃 MongoDB配置管理", "🔍 文本搜索", "🎯 聚类分析", "ℹ️ 系统信息"],
             index=0
         )
 
@@ -521,7 +830,7 @@ def main():
         home_page()
     elif page == "⚙️ 系统配置管理":
         config_management_page()
-    elif page == "🔥 嵌入模型管理":
+    elif page == "🤖 嵌入模型管理":
         model_manager_page()
     elif page == "📊 数据上传与处理":
         data_upload_page()
@@ -572,51 +881,74 @@ def home_page():
         """, unsafe_allow_html=True)
     
     with col3:
-        model_status = "✅ 已配置" if model_config.get("last_used_model") else "❌ 未配置"
+        model_status = "✅ 已加载" if st.session_state.model_loaded else "❌ 未加载"
         model_auto = "🔄 自动加载" if model_config.get("auto_load", False) else "⚠️ 手动加载"
         st.markdown(f"""
         <div class="metric-card">
-            <h3>🔥 模型</h3>
+            <h3>🤖 模型</h3>
             <h2>{model_status}</h2>
             <p>{model_auto}</p>
         </div>
         """, unsafe_allow_html=True)
     
-    # 数据持久化状态检查
-    if st.session_state.components['milvus_manager'].is_connected:
-        persistence_status = st.session_state.components['milvus_manager'].verify_data_persistence()
-        
-        if persistence_status['status'] == 'success':
+    # 连接状态显示
+    st.markdown("### 🔗 连接状态")
+    
+    col1, col2 = st.columns(2)
+    
+    with col1:
+        # MongoDB连接状态
+        mongodb_session_config = st.session_state.get("mongodb_config", {})
+        if mongodb_session_config.get("connected", False):
             st.markdown(f"""
             <div class="persistence-status status-success">
-                <h4>✅ 数据持久化状态良好</h4>
-                <p>Milvus数据库中保存了 <strong>{persistence_status['num_entities']:,}</strong> 条记录</p>
-                <p>配置已保存，重启应用后数据和连接设置都会自动恢复</p>
-            </div>
-            """, unsafe_allow_html=True)
-        elif persistence_status['status'] == 'no_collection':
-            st.markdown("""
-            <div class="persistence-status status-warning">
-                <h4>⚠️ 暂无持久化数据</h4>
-                <p>Milvus数据库已连接，但尚未创建数据集合</p>
-                <p>上传数据并插入到Milvus后，数据将永久保存</p>
+                <h4>✅ MongoDB连接正常</h4>
+                <p>已连接到 <strong>{mongodb_session_config['host']}:{mongodb_session_config['port']}</strong></p>
+                <p>数据库: {mongodb_session_config['db_name']}, 集合: {mongodb_session_config['col_name']}</p>
             </div>
             """, unsafe_allow_html=True)
         else:
-            st.markdown(f"""
-            <div class="persistence-status status-error">
-                <h4>❌ 数据状态检查失败</h4>
-                <p>{persistence_status['message']}</p>
+            st.markdown("""
+            <div class="persistence-status status-warning">
+                <h4>⚠️ MongoDB未连接</h4>
+                <p>请到 '🍃 MongoDB配置管理' 页面配置连接</p>
             </div>
             """, unsafe_allow_html=True)
-    else:
-        st.markdown("""
-        <div class="persistence-status status-warning">
-            <h4>🔌 Milvus未连接</h4>
-            <p>请先连接到Milvus数据库以启用数据持久化功能</p>
-            <p>如已配置自动连接，请检查服务器状态</p>
-        </div>
-        """, unsafe_allow_html=True)
+    
+    with col2:
+        # Milvus连接状态
+        if st.session_state.components['milvus_manager'].is_connected:
+            persistence_status = st.session_state.components['milvus_manager'].verify_data_persistence()
+            
+            if persistence_status['status'] == 'success':
+                st.markdown(f"""
+                <div class="persistence-status status-success">
+                    <h4>✅ Milvus数据库正常</h4>
+                    <p>已保存 <strong>{persistence_status['num_entities']:,}</strong> 条记录</p>
+                    <p>配置已保存，重启后自动恢复</p>
+                </div>
+                """, unsafe_allow_html=True)
+            elif persistence_status['status'] == 'no_collection':
+                st.markdown("""
+                <div class="persistence-status status-warning">
+                    <h4>⚠️ Milvus已连接，暂无数据</h4>
+                    <p>数据库已连接，但尚未创建数据集合</p>
+                </div>
+                """, unsafe_allow_html=True)
+            else:
+                st.markdown(f"""
+                <div class="persistence-status status-error">
+                    <h4>❌ Milvus数据状态异常</h4>
+                    <p>{persistence_status['message']}</p>
+                </div>
+                """, unsafe_allow_html=True)
+        else:
+            st.markdown("""
+            <div class="persistence-status status-warning">
+                <h4>🗄️ Milvus未连接</h4>
+                <p>请到 '🗄️ Milvus数据库管理' 页面配置连接</p>
+            </div>
+            """, unsafe_allow_html=True)
     
     # 系统状态卡片
     st.markdown("### 📊 系统状态")
@@ -625,7 +957,7 @@ def home_page():
     with col1:
         st.markdown("""
         <div class="metric-card">
-            <h3>📋 本地数据</h3>
+            <h3>📄 本地数据</h3>
             <h2>{}</h2>
             <p>当前加载数量</p>
         </div>
@@ -661,10 +993,10 @@ def home_page():
     
     with col4:
         model_info = st.session_state.components['vector_processor'].get_model_info()
-        embedding_dim = model_info.get('dimension', 'N/A')
+        embedding_dim = model_info.get('dimension', 'N/A') if st.session_state.model_loaded else 'N/A'
         st.markdown("""
         <div class="metric-card">
-            <h3>🔥 向量维度</h3>
+            <h3>🔢 向量维度</h3>
             <h2>{}</h2>
             <p>模型输出维度</p>
         </div>
@@ -673,7 +1005,7 @@ def home_page():
     st.markdown("---")
     
     # 功能介绍
-    st.markdown("## 🎯 主要功能")
+    st.markdown("## 🚀 主要功能")
     
     col1, col2 = st.columns(2)
     
@@ -708,8 +1040,8 @@ def home_page():
             <h4>🗄️ 数据管理</h4>
             <ul>
                 <li><strong>Milvus向量数据库集成</strong></li>
+                <li><strong>MongoDB元数据存储</strong></li>
                 <li><strong>配置自动保存和恢复</strong></li>
-                <li><strong>支持记录删除和数据清理</strong></li>
                 <li>高效向量存储和检索</li>
             </ul>
         </div>
@@ -728,72 +1060,56 @@ def home_page():
         """, unsafe_allow_html=True)
     
     # 快速开始提示
-    if not milvus_config.get("host") or not model_config.get("last_used_model"):
+    if not milvus_config.get("host") or not st.session_state.model_loaded or not mongodb_config.get("host"):
         st.markdown("---")
         st.markdown("## 🚀 快速开始")
         
-        if not milvus_config.get("host"):
-            st.info("💡 首次使用？请先到 '🗄️ Milvus数据库管理' 页面配置数据库连接")
+        if not st.session_state.model_loaded:
+            st.info("💡 请先到 '🤖 嵌入模型管理' 页面选择并加载向量化模型")
         
-        if not model_config.get("last_used_model"):
-            st.info("💡 请到 '🔥 嵌入模型管理' 页面选择并加载向量化模型")
+        if not milvus_config.get("host"):
+            st.info("💡 请到 '🗄️ Milvus数据库管理' 页面配置数据库连接")
+        
+        if not mongodb_config.get("host"):
+            st.info("💡 请到 '🍃 MongoDB配置管理' 页面配置元数据存储")
 
 def data_upload_page():
     st.markdown("## 📊 数据上传与处理")
     
-    # 模型选择和加载
-    st.markdown("### 🔥 模型选择与加载")
-    
-    # 嵌入模型管理页面已处理模型管理，这里只需用vector_processor的模型列表
-    vp = st.session_state.components['vector_processor']
-    available_models = vp.available_models
-    if not available_models:
-        st.warning("当前无可用嵌入模型！请前往'嵌入模型管理'页面添加模型。")
+    # 检查模型加载状态
+    if not st.session_state.model_loaded:
+        st.warning("⚠️ 尚未加载嵌入模型！")
+        st.info("💡 请先到 '🤖 嵌入模型管理' 页面加载模型，然后再回到此页面进行数据处理。")
+        
+        col1, col2 = st.columns([3, 1])
+        with col1:
+            st.markdown("""
+            **为什么需要先加载模型？**
+            - 文本向量化需要使用嵌入模型
+            - 模型加载后可以处理任何文本数据
+            - 统一的模型管理确保配置一致性
+            """)
+        with col2:
+            if st.button("🚀 前往模型管理", type="primary", width="stretch"):
+                st.switch_page("🤖 嵌入模型管理")
         return
-
-    # 从配置中获取上次使用的模型
-    model_config = config_manager.get_model_config()
-    last_used_model = model_config.get("last_used_model", "")
     
-    # 设置默认选择
-    default_index = 0
-    if last_used_model and last_used_model in available_models:
-        default_index = available_models.index(last_used_model)
-
-    current_model = st.selectbox(
-        "选择本地嵌入模型",
-        options=available_models,
-        index=default_index,
-        help="选择你要用于向量化的嵌入模型，系统会记住您的选择"
-    )
-    vp.model_name = current_model
-
+    # 显示当前使用的模型
+    model_config = config_manager.get_model_config()
+    current_model = model_config.get("last_used_model", "")
+    
+    st.markdown("### 🤖 当前模型状态")
     col1, col2 = st.columns([3, 1])
     with col1:
-        if last_used_model:
-            st.info(f"💡 上次使用的模型: {last_used_model}")
-        else:
-            st.info("选择模型后，系统会自动保存您的选择")
+        st.success(f"✅ 已加载模型: **{current_model}**")
+        vp = st.session_state.components['vector_processor']
+        model_info = vp.get_model_info()
+        if model_info:
+            st.info(f"🔢 向量维度: {model_info.get('dimension', 'N/A')}")
     with col2:
-        if st.button("🔥 加载模型", type="primary", use_container_width=True):
-            with st.spinner("正在加载模型..."):
-                if vp.load_model():
-                    st.session_state.model_loaded = True
-                    # 保存模型配置
-                    config_manager.update_model_config(
-                        last_used_model=current_model,
-                        auto_load=True
-                    )
-                    st.success("✅ 模型加载成功，配置已保存！")
-                    st.rerun()
-                else:
-                    st.session_state.model_loaded = False
-
-    if not st.session_state.model_loaded:
-        st.warning("⚠️ 当前模型未加载，请先加载模型！")
-        return
-
-    st.info(f"✅ 已选模型: {vp.model_name}，向量维度: {vp.dimension if vp.dimension else '未知'}")
+        if st.button("🔄 切换模型", width="stretch"):
+            # 这里可以添加快速切换模型的功能，或者跳转到模型管理页面
+            st.info("💡 请到 '🤖 嵌入模型管理' 页面切换模型")
 
     st.markdown("---")
     
@@ -908,82 +1224,83 @@ def data_upload_page():
         # 向量化处理
         st.markdown("### 🚀 向量化处理")
         
-        if not st.session_state.model_loaded:
-            st.warning("⚠️ 请先加载向量化模型")
-        else:
-            col1, col2 = st.columns([3, 1])
-            with col1:
-                st.info("点击下方按钮开始文本向量化处理，处理后的数据可以保存到Milvus数据库中永久存储")
-            with col2:
-                process_button = st.button("🚀 开始向量化处理并持久化", type="primary", use_container_width=True)
+        col1, col2 = st.columns([3, 1])
+        with col1:
+            st.info("点击下方按钮开始文本向量化处理，处理后的数据可以保存到Milvus数据库中永久存储")
+        with col2:
+            process_button = st.button("🚀 开始向量化处理并持久化", type="primary", width="stretch")
+        
+        if process_button:
+            progress_bar = st.progress(0)
+            status_text = st.empty()
             
-            if process_button:
-                progress_bar = st.progress(0)
-                status_text = st.empty()
+            try:
+                status_text.text("📊 正在处理文本数据...")
+                progress_bar.progress(30)
                 
-                try:
-                    status_text.text("📊 正在处理文本数据...")
-                    progress_bar.progress(30)
+                texts, vectors, metadata = st.session_state.components['vector_processor'].process_json_data(json_data)
+                progress_bar.progress(70)
+                
+                if len(texts) > 0:
+                    # 保存到session state
+                    st.session_state.texts = texts
+                    st.session_state.vectors = vectors
+                    st.session_state.metadata = metadata
+                    st.session_state.data_loaded = True
                     
-                    texts, vectors, metadata = st.session_state.components['vector_processor'].process_json_data(json_data)
-                    progress_bar.progress(70)
+                    # ------ 新增：自动批量插入Milvus和MongoDB ------
+                    embedding_dim = vectors.shape[1]
+                    status_text.text("💾 正在批量插入 Milvus & MongoDB ...")
                     
-                    if len(texts) > 0:
-                        # 保存到session state
-                        st.session_state.texts = texts
-                        st.session_state.vectors = vectors
-                        st.session_state.metadata = metadata
-                        st.session_state.data_loaded = True
-                        
-                        # ------ 新增：自动批量插入Milvus和MongoDB ------
-                        embedding_dim = vectors.shape[1]
-                        status_text.text("💾 正在批量插入 Milvus & MongoDB ...")
+                    try:
                         inserted_ids = milvus_mongo_upload(texts, vectors, metadata, milvus_dim=embedding_dim)
                         progress_bar.progress(100)
                         status_text.text(f"✅ 向量化及持久化完成！已插入 {len(inserted_ids)} 条数据。")
                         st.success(f"🎉 向量化和持久化完成！成功处理并写入 {len(inserted_ids)} 条文本数据。")
-
-                        # 搜索引擎设置
-                        st.session_state.components['search_engine'].load_data(vectors, texts, metadata)
-                        st.session_state.components['search_engine'].set_vector_processor(st.session_state.components['vector_processor'])
-                        
-                        # 设置聚类分析器数据
-                        st.session_state.components['clustering_analyzer'].load_data(vectors, texts, metadata)
-                        
+                    except Exception as e:
                         progress_bar.progress(100)
-                        status_text.text("✅ 向量化处理完成！")
+                        status_text.text("⚠️ 向量化完成，但持久化失败")
+                        st.warning(f"⚠️ 向量化完成，但数据持久化失败: {e}")
+                        st.info("💡 数据已保存到内存中，可以进行搜索和聚类分析。要启用持久化，请检查Milvus和MongoDB连接。")
+
+                    # 搜索引擎设置
+                    st.session_state.components['search_engine'].load_data(vectors, texts, metadata)
+                    st.session_state.components['search_engine'].set_vector_processor(st.session_state.components['vector_processor'])
+                    
+                    # 设置聚类分析器数据
+                    st.session_state.components['clustering_analyzer'].load_data(vectors, texts, metadata)
+                    
+                    st.success(f"🎉 向量化完成！成功处理了 {len(texts)} 条文本")
+                    
+                    # 显示处理结果统计
+                    st.markdown("### 📊 处理结果")
+                    col1, col2, col3, col4 = st.columns(4)
+                    with col1:
+                        st.metric("文本数量", len(texts))
+                    with col2:
+                        st.metric("向量维度", vectors.shape[1])
+                    with col3:
+                        st.metric("数据大小", f"{vectors.nbytes / 1024 / 1024:.2f} MB")
+                    with col4:
+                        st.metric("处理状态", "✅ 完成")
+                    
+                    # 显示向量化样本
+                    with st.expander("🔍 查看向量化样本", expanded=False):
+                        sample_idx = 0
+                        st.write(f"**原文本:** {texts[sample_idx]}")
+                        st.write(f"**向量维度:** {len(vectors[sample_idx])}")
+                        st.write(f"**向量前10维:** {vectors[sample_idx][:10].tolist()}")
                         
-                        st.success(f"🎉 向量化完成！成功处理了 {len(texts)} 条文本")
-                        
-                        # 显示处理结果统计
-                        st.markdown("### 📊 处理结果")
-                        col1, col2, col3, col4 = st.columns(4)
-                        with col1:
-                            st.metric("文本数量", len(texts))
-                        with col2:
-                            st.metric("向量维度", vectors.shape[1])
-                        with col3:
-                            st.metric("数据大小", f"{vectors.nbytes / 1024 / 1024:.2f} MB")
-                        with col4:
-                            st.metric("处理状态", "✅ 完成")
-                        
-                        # 显示向量化样本
-                        with st.expander("🔍 查看向量化样本", expanded=False):
-                            sample_idx = 0
-                            st.write(f"**原文本:** {texts[sample_idx]}")
-                            st.write(f"**向量维度:** {len(vectors[sample_idx])}")
-                            st.write(f"**向量前10维:** {vectors[sample_idx][:10].tolist()}")
-                            
-                    else:
-                        st.error("❌ 未找到有效的文本数据")
-                        
-                except Exception as e:
-                    st.error(f"❌ 向量化处理失败: {e}")
-                    st.exception(e)
-                
-                finally:
-                    progress_bar.empty()
-                    status_text.empty()
+                else:
+                    st.error("❌ 未找到有效的文本数据")
+                    
+            except Exception as e:
+                st.error(f"❌ 向量化处理失败: {e}")
+                st.exception(e)
+            
+            finally:
+                progress_bar.empty()
+                status_text.empty()
 
 def milvus_management_page():
     st.markdown("## 🗄️ Milvus数据库管理")
@@ -997,14 +1314,14 @@ def milvus_management_page():
         if persistence_status['status'] == 'success':
             st.success(f"✅ 数据库中已保存 {persistence_status['num_entities']:,} 条记录")
         elif persistence_status['status'] == 'no_collection':
-            st.info("📝 数据库已连接，但尚未创建数据集合")
+            st.info("📄 数据库已连接，但尚未创建数据集合")
         else:
             st.error(f"❌ {persistence_status['message']}")
     else:
         st.warning("⚠️ 尚未连接到Milvus数据库")
     
     # 连接设置
-    st.markdown("### 🔌 数据库连接")
+    st.markdown("### 🔗 数据库连接")
     
     # 从配置文件加载设置
     milvus_config = config_manager.get_milvus_config()
@@ -1031,7 +1348,7 @@ def milvus_management_page():
     with col1:
         st.info("💡 连接成功后，配置将自动保存。如果Milvus服务器未设置认证，用户名和密码可以留空")
     with col2:
-        connect_button = st.button("🔌 连接数据库", type="primary", use_container_width=True)
+        connect_button = st.button("🔗 连接数据库", type="primary", width="stretch")
     
     # 连接操作
     if connect_button:
@@ -1070,12 +1387,12 @@ def milvus_management_page():
         st.info(f"📋 当前集合: {conn_info['collection_name']}")
         
         # 集合管理
-        st.markdown("### 📋 集合管理")
+        st.markdown("### 🛠️ 集合管理")
         
         col1, col2, col3 = st.columns(3)
         
         with col1:
-            if st.button("📋 创建/连接集合", use_container_width=True):
+            if st.button("🆕 创建/连接集合", width="stretch"):
                 if st.session_state.data_loaded:
                     with st.spinner("正在创建/连接集合..."):
                         dimension = st.session_state.vectors.shape[1]
@@ -1086,7 +1403,7 @@ def milvus_management_page():
                     st.warning("⚠️ 请先上传并处理数据")
         
         with col2:
-            if st.button("💾 插入数据到Milvus", use_container_width=True):
+            if st.button("📤 插入数据到Milvus", width="stretch"):
                 if st.session_state.data_loaded and st.session_state.components['milvus_manager'].collection:
                     with st.spinner("正在插入数据到Milvus..."):
                         success = st.session_state.components['milvus_manager'].insert_vectors(
@@ -1100,177 +1417,35 @@ def milvus_management_page():
                     st.warning("⚠️ 请先创建集合并加载数据")
         
         with col3:
-            if st.button("🗑️ 删除集合", use_container_width=True):
-                # 使用session state来管理确认状态
-                if 'confirm_delete_collection' not in st.session_state:
-                    st.session_state.confirm_delete_collection = False
-                
-                if not st.session_state.confirm_delete_collection:
-                    st.session_state.confirm_delete_collection = True
+            # 修复删除集合功能
+            delete_collection_key = "confirm_delete_collection"
+            
+            # 初始化确认状态
+            if delete_collection_key not in st.session_state:
+                st.session_state[delete_collection_key] = False
+            
+            # 如果还没有确认，显示删除按钮
+            if not st.session_state[delete_collection_key]:
+                if st.button("🗑️ 删除集合", width="stretch", key="delete_collection_btn"):
+                    st.session_state[delete_collection_key] = True
                     st.rerun()
-                else:
-                    if st.button("⚠️ 确认删除", type="secondary"):
-                        with st.spinner("正在删除集合..."):
-                            st.session_state.components['milvus_manager'].delete_collection()
-                            st.session_state.confirm_delete_collection = False
-                            st.rerun()
-        
-        # 数据管理功能
-        if st.session_state.components['milvus_manager'].collection:
-            st.markdown("### 🗂️ 数据管理")
-            
-            # 获取集合统计信息
-            stats = st.session_state.components['milvus_manager'].get_collection_stats()
-            if stats and stats.get('num_entities', 0) > 0:
-                
-                # 数据管理选项卡
-                tab1, tab2, tab3 = st.tabs(["👁️ 数据预览", "🔍 搜索删除", "🗑️ 批量删除"])
-                
-                with tab1:
-                    st.markdown("#### 👁️ 数据预览")
-                    
-                    col1, col2 = st.columns([3, 1])
-                    with col1:
-                        st.info("查看数据库中的记录，可以选择特定记录进行删除")
-                    with col2:
-                        if st.button("🔄 刷新数据", use_container_width=True):
-                            st.rerun()
-                    
-                    # 获取样本记录
-                    sample_records = st.session_state.components['milvus_manager'].get_sample_records(20)
-                    
-                    if sample_records:
-                        st.write(f"显示前20条记录（总共 {stats.get('num_entities', 0):,} 条）：")
-                        
-                        # 选择要删除的记录
-                        selected_ids = []
-                        for i, record in enumerate(sample_records):
-                            col1, col2, col3 = st.columns([1, 6, 1])
-                            
-                            with col1:
-                                if st.checkbox("选择", key=f"select_{record['id']}", label_visibility="collapsed"):
-                                    selected_ids.append(record['id'])
-                            
-                            with col2:
-                                st.markdown(f"""
-                                <div class="record-item">
-                                    <strong>ID:</strong> {record['id']}<br>
-                                    <strong>文本:</strong> {record['text']}<br>
-                                    <strong>元数据:</strong> {json.dumps(record['metadata'], ensure_ascii=False)}
-                                </div>
-                                """, unsafe_allow_html=True)
-                            
-                            with col3:
-                                if st.button("🗑️", key=f"delete_{record['id']}", help="删除此记录"):
-                                    with st.spinner("正在删除记录..."):
-                                        success = st.session_state.components['milvus_manager'].delete_records_by_ids([record['id']])
-                                        if success:
-                                            st.rerun()
-                        
-                        # 批量删除选中的记录
-                        if selected_ids:
-                            st.markdown("---")
-                            col1, col2 = st.columns([3, 1])
-                            with col1:
-                                st.info(f"已选择 {len(selected_ids)} 条记录")
-                            with col2:
-                                if st.button("🗑️ 删除选中", type="secondary", use_container_width=True):
-                                    with st.spinner("正在删除选中的记录..."):
-                                        success = st.session_state.components['milvus_manager'].delete_records_by_ids(selected_ids)
-                                        if success:
-                                            st.rerun()
-                    else:
-                        st.info("暂无记录可显示")
-                
-                with tab2:
-                    st.markdown("#### 🔍 搜索并删除记录")
-                    
-                    # 文本搜索
-                    search_text = st.text_input(
-                        "搜索文本内容",
-                        placeholder="输入要搜索的文本内容...",
-                        help="支持模糊匹配，会搜索包含该文本的所有记录"
-                    )
-                    
-                    if search_text:
-                        # 搜索记录
-                        search_results = st.session_state.components['milvus_manager'].search_records_by_text(search_text)
-                        
-                        if search_results:
-                            st.success(f"🔍 找到 {len(search_results)} 条匹配记录")
-                            
-                            # 显示搜索结果
-                            for i, record in enumerate(search_results):
-                                col1, col2 = st.columns([5, 1])
-                                
-                                with col1:
-                                    st.markdown(f"""
-                                    <div class="record-item">
-                                        <strong>ID:</strong> {record['id']}<br>
-                                        <strong>文本:</strong> {record['text']}<br>
-                                        <strong>元数据:</strong> {json.dumps(record['metadata'], ensure_ascii=False)}
-                                    </div>
-                                    """, unsafe_allow_html=True)
-                                
-                                with col2:
-                                    if st.button("🗑️ 删除", key=f"search_delete_{record['id']}"):
-                                        with st.spinner("正在删除记录..."):
-                                            success = st.session_state.components['milvus_manager'].delete_records_by_ids([record['id']])
-                                            if success:
-                                                st.rerun()
-                            
-                            # 批量删除搜索结果
-                            st.markdown("---")
-                            col1, col2 = st.columns([3, 1])
-                            with col1:
-                                st.warning(f"⚠️ 将删除所有包含 '{search_text}' 的记录")
-                            with col2:
-                                # 使用session state管理确认状态
-                                if f'confirm_delete_search_{search_text}' not in st.session_state:
-                                    st.session_state[f'confirm_delete_search_{search_text}'] = False
-                                
-                                if st.button("🗑️ 删除所有匹配", type="secondary", use_container_width=True):
-                                    st.session_state[f'confirm_delete_search_{search_text}'] = True
-                                    st.rerun()
-                                
-                                if st.session_state.get(f'confirm_delete_search_{search_text}', False):
-                                    if st.button("⚠️ 确认删除所有", key="confirm_delete_all_search"):
-                                        with st.spinner("正在删除所有匹配记录..."):
-                                            success = st.session_state.components['milvus_manager'].delete_records_by_text_pattern(search_text)
-                                            if success:
-                                                st.session_state[f'confirm_delete_search_{search_text}'] = False
-                                                st.rerun()
-                        else:
-                            st.info("🔍 未找到匹配的记录")
-                
-                with tab3:
-                    st.markdown("#### 🗑️ 批量删除操作")
-                    
-                    st.warning("⚠️ 以下操作将永久删除数据，请谨慎操作！")
-                    
-                    # 清空所有数据
-                    st.markdown("##### 🗑️ 清空所有数据")
-                    col1, col2 = st.columns([3, 1])
-                    with col1:
-                        st.error(f"⚠️ 将删除集合中的所有 {stats.get('num_entities', 0):,} 条记录")
-                    with col2:
-                        # 使用session state管理确认状态
-                        if 'confirm_clear_all' not in st.session_state:
-                            st.session_state.confirm_clear_all = False
-                        
-                        if st.button("🗑️ 清空所有数据", type="secondary", use_container_width=True):
-                            st.session_state.confirm_clear_all = True
-                            st.rerun()
-                        
-                        if st.session_state.confirm_clear_all:
-                            if st.button("⚠️ 确认清空", key="confirm_clear_all_final"):
-                                success = st.session_state.components['milvus_manager'].clear_all_data()
-                                if success:
-                                    st.session_state.confirm_clear_all = False
-                                    st.rerun()
-            
             else:
-                st.info("📝 集合为空，暂无数据需要管理")
+                # 已经点击了删除，显示确认按钮
+                col_a, col_b = st.columns(2)
+                with col_a:
+                    if st.button("⚠️ 确认删除", type="secondary", width="content", key="confirm_delete_btn"):
+                        with st.spinner("正在删除集合..."):
+                            success = st.session_state.components['milvus_manager'].delete_collection()
+                            if success:
+                                st.session_state[delete_collection_key] = False
+                                st.success("✅ 集合已删除")
+                                st.rerun()
+                            else:
+                                st.error("❌ 删除集合失败")
+                with col_b:
+                    if st.button("❌ 取消", width="content", key="cancel_delete_btn"):
+                        st.session_state[delete_collection_key] = False
+                        st.rerun()
         
         # 集合统计信息
         if st.session_state.components['milvus_manager'].collection:
@@ -1288,6 +1463,23 @@ def milvus_management_page():
                 # 详细信息
                 with st.expander("🔍 详细信息"):
                     st.json(stats)
+        
+        # 调试功能
+        st.markdown("### 🔧 调试工具")
+        col1, col2 = st.columns(2)
+        with col1:
+            if st.button("🔍 调试集合信息", width="stretch"):
+                debug_collection_info("text_vectors")
+        with col2:
+            if st.button("🧪 测试连接", width="stretch"):
+                try:
+                    collection = get_milvus_collection("text_vectors", 384)
+                    if collection:
+                        st.success("✅ 集合连接测试成功")
+                    else:
+                        st.error("❌ 集合连接测试失败")
+                except Exception as e:
+                    st.error(f"❌ 连接测试失败: {e}")
     else:
         st.warning("⚠️ 未连接到Milvus数据库")
         st.info("💡 请确保Milvus服务器正在运行，并检查网络连接")
@@ -1295,13 +1487,24 @@ def milvus_management_page():
 def search_page():
     st.markdown("## 🔍 文本搜索")
     
+    # 检查模型是否已加载
+    if not st.session_state.model_loaded:
+        st.warning("⚠️ 尚未加载嵌入模型！")
+        st.info("💡 请先到 '🤖 嵌入模型管理' 页面加载模型，然后再进行搜索。")
+        return
+    
     # 检查MongoDB和Milvus是否已连接
-    milvus_collection = get_milvus_collection(
-        collection_name="text_embeddings",
-        dim=st.session_state.vectors.shape[1] if st.session_state.vectors is not None else 384
-    )
-    mongo_col = get_mongo_collection()
-    vector_processor = st.session_state.components["vector_processor"]
+    try:
+        milvus_collection = get_milvus_collection(
+            collection_name="text_vectors",
+            dim=st.session_state.vectors.shape[1] if st.session_state.vectors is not None else 384
+        )
+        mongo_col = get_mongo_collection()
+        vector_processor = st.session_state.components["vector_processor"]
+    except Exception as e:
+        st.error(f"❌ 初始化搜索组件失败: {e}")
+        st.info("💡 请确保Milvus和MongoDB都已正确配置和连接")
+        return
 
     # 搜索界面
     st.markdown("### 🔍 搜索查询")
@@ -1314,7 +1517,7 @@ def search_page():
         )
     with col2:
         st.write("")  # 占位
-        search_button = st.button("🔍 开始搜索", type="primary", use_container_width=True)
+        search_button = st.button("🚀 开始搜索", type="primary", width="stretch")
 
     # 搜索参数
     col1, col2 = st.columns(2)
@@ -1325,10 +1528,6 @@ def search_page():
 
     # 执行搜索
     if search_button and query:
-        if not st.session_state.model_loaded:
-            st.error("❌ 请先加载向量化模型")
-            return
-
         with st.spinner("🔍 正在搜索相关内容..."):
             try:
                 results = milvus_mongo_semantic_search(query, top_k, milvus_collection, mongo_col, vector_processor)
@@ -1364,10 +1563,10 @@ def search_page():
                             color = "#ffc107"  # 黄色
                         else:
                             color = "#dc3545"  # 红色
-                        with st.expander(f"🎯 结果 {i+1} - 相似度: {similarity_pct:.1f}%", expanded=i < 3):
+                        with st.expander(f"📄 结果 {i+1} - 相似度: {similarity_pct:.1f}%", expanded=i < 3):
                             col1, col2 = st.columns([3, 1])
                             with col1:
-                                st.markdown("**📄 文本内容:**")
+                                st.markdown("**📝 文本内容:**")
                                 st.write(result['text'])
                                 if result.get('metadata'):
                                     st.markdown("**📋 元数据:**")
@@ -1412,7 +1611,7 @@ def clustering_page():
         with col1:
             n_clusters = st.slider("聚类数量 (K)", 2, 20, 8, help="设置要分成多少个聚类")
         with col2:
-            if st.button("🎯 寻找最优K值", help="使用轮廓系数寻找最佳聚类数"):
+            if st.button("🔍 寻找最优K值", help="使用轮廓系数寻找最佳聚类数"):
                 with st.spinner("正在分析最优K值..."):
                     k_range, silhouette_scores = st.session_state.components['clustering_analyzer'].find_optimal_k()
                     if k_range and silhouette_scores:
@@ -1428,7 +1627,7 @@ def clustering_page():
                             yaxis_title="轮廓系数",
                             showlegend=False
                         )
-                        st.plotly_chart(fig, use_container_width=True)
+                        st.plotly_chart(fig, width="stretch")
                         
                         optimal_k = k_range[np.argmax(silhouette_scores)]
                         max_score = max(silhouette_scores)
@@ -1444,7 +1643,7 @@ def clustering_page():
     # 执行聚类
     st.markdown("### 🚀 开始聚类")
     
-    if st.button("🎯 执行聚类分析", type="primary", use_container_width=True):
+    if st.button("🎯 执行聚类分析", type="primary", width="stretch"):
         with st.spinner("正在进行聚类分析..."):
             try:
                 if clustering_method == "K-means聚类":
@@ -1459,7 +1658,7 @@ def clustering_page():
                         reduced_vectors = st.session_state.components['clustering_analyzer'].reduce_dimensions()
                         if reduced_vectors.size > 0:
                             fig = st.session_state.components['clustering_analyzer'].create_cluster_visualization()
-                            st.plotly_chart(fig, use_container_width=True)
+                            st.plotly_chart(fig, width="stretch")
                     
                     # 聚类摘要
                     st.markdown("### 📋 聚类摘要")
@@ -1480,12 +1679,12 @@ def clustering_page():
                     # 显示每个聚类的详细信息
                     for cluster_id, info in cluster_summary.items():
                         if cluster_id == '-1':
-                            title = f"🔴 噪声点 ({info['size']} 个样本, {info['percentage']:.1f}%)"
+                            title = f"🔹 噪声点 ({info['size']} 个样本, {info['percentage']:.1f}%)"
                         else:
                             title = f"🎯 聚类 {cluster_id} ({info['size']} 个样本, {info['percentage']:.1f}%)"
                         
                         with st.expander(title):
-                            st.markdown("**📄 样本文本:**")
+                            st.markdown("**📝 样本文本:**")
                             for j, text in enumerate(info['sample_texts']):
                                 st.write(f"{j+1}. {text}")
                         
@@ -1517,35 +1716,59 @@ def system_info_page():
             display_config["password"] = "***"
         st.json(display_config)
     
-    # 数据持久化状态
-    st.markdown("### 💾 数据持久化状态")
+    # 连接状态
+    st.markdown("### 🔗 连接状态")
     
-    if st.session_state.components['milvus_manager'].is_connected:
-        persistence_status = st.session_state.components['milvus_manager'].verify_data_persistence()
-        
-        if persistence_status['status'] == 'success':
-            st.success(f"✅ Milvus数据库：{persistence_status['num_entities']:,} 条记录")
-        elif persistence_status['status'] == 'no_collection':
-            st.info("📝 Milvus数据库：已连接，暂无数据")
+    col1, col2 = st.columns(2)
+    
+    with col1:
+        st.markdown("#### 🗄️ Milvus状态")
+        if st.session_state.components['milvus_manager'].is_connected:
+            persistence_status = st.session_state.components['milvus_manager'].verify_data_persistence()
+            
+            if persistence_status['status'] == 'success':
+                st.success(f"✅ Milvus数据库：{persistence_status['num_entities']:,} 条记录")
+            elif persistence_status['status'] == 'no_collection':
+                st.info("📄 Milvus数据库：已连接，暂无数据")
+            else:
+                st.error(f"❌ Milvus数据库：{persistence_status['message']}")
         else:
-            st.error(f"❌ Milvus数据库：{persistence_status['message']}")
-    else:
-        st.warning("⚠️ Milvus数据库：未连接")
+            st.warning("⚠️ Milvus数据库：未连接")
+    
+    with col2:
+        st.markdown("#### 🍃 MongoDB状态")
+        mongodb_session_config = st.session_state.get("mongodb_config", {})
+        if mongodb_session_config.get("connected", False):
+            try:
+                client = st.session_state.get("mongodb_client")
+                if client:
+                    db = client[mongodb_session_config["db_name"]]
+                    col = db[mongodb_session_config["col_name"]]
+                    count = col.estimated_document_count()
+                    st.success(f"✅ MongoDB数据库：{count:,} 条记录")
+                else:
+                    st.warning("⚠️ MongoDB：连接对象丢失")
+            except Exception as e:
+                st.error(f"❌ MongoDB数据库：连接异常 - {e}")
+        else:
+            st.warning("⚠️ MongoDB数据库：未连接")
     
     # 模型信息
-    st.markdown("### 🔥 向量化模型信息")
+    st.markdown("### 🤖 向量化模型信息")
     model_info = st.session_state.components['vector_processor'].get_model_info()
-    if model_info:
+    if model_info and st.session_state.model_loaded:
         col1, col2, col3 = st.columns(3)
         with col1:
             st.metric("模型名称", model_info.get('model_name', 'N/A'))
         with col2:
-            st.metric("加载状态", "✅ 已加载" if model_info.get('status') == 'loaded' else "❌ 未加载")
+            st.metric("加载状态", "✅ 已加载" if st.session_state.model_loaded else "❌ 未加载")
         with col3:
             st.metric("向量维度", model_info.get('dimension', 'N/A'))
         
         with st.expander("🔍 模型详细信息"):
             st.json(model_info)
+    else:
+        st.info("📄 暂无已加载的模型")
     
     # 数据状态
     st.markdown("### 📊 数据状态")
@@ -1566,15 +1789,6 @@ def system_info_page():
             st.metric("向量维度", st.session_state.vectors.shape[1])
         else:
             st.metric("向量维度", "N/A")
-    
-    # 连接信息
-    st.markdown("### 🔌 连接信息")
-    
-    if st.session_state.components['milvus_manager'].is_connected:
-        conn_info = st.session_state.components['milvus_manager'].get_connection_info()
-        st.json(conn_info)
-    else:
-        st.info("Milvus未连接")
 
 if __name__ == "__main__":
     main()
