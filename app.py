@@ -1,6 +1,7 @@
 # app_enhanced.py - 修复版本
 import streamlit as st
 import json
+import os
 import numpy as np
 import pandas as pd
 import plotly.express as px
@@ -126,46 +127,73 @@ def check_and_load_model_on_startup():
     return False
 
 def check_and_connect_mongodb_on_startup():
-    """检查并在启动时自动连接MongoDB"""
-    mongodb_config = config_manager.get_mongodb_config()
-    if mongodb_config.get("auto_connect", False) and mongodb_config.get("host"):
-        if "mongodb_config" not in st.session_state or not st.session_state.get("mongodb_client"):
-            try:
-                # 初始化配置
-                st.session_state.mongodb_config = {
-                    "host": mongodb_config.get("host", "localhost"),
-                    "port": mongodb_config.get("port", 27017),
-                    "username": mongodb_config.get("username", ""),
-                    "password": mongodb_config.get("password", ""),
-                    "db_name": mongodb_config.get("db_name", "textdb"),
-                    "col_name": mongodb_config.get("col_name", "metadata"),
-                    "connected": False,
-                    "error": ""
-                }
-                
-                # 尝试连接
-                config = st.session_state.mongodb_config
-                if config["username"] and config["password"]:
-                    uri = f"mongodb://{config['username']}:{config['password']}@{config['host']}:{config['port']}/{config['db_name']}?authSource=admin"
-                else:
-                    uri = f"mongodb://{config['host']}:{config['port']}/"
-                
-                client = MongoClient(uri, serverSelectionTimeoutMS=3000)
-                # 测试连接
-                db = client[config["db_name"]]
-                col = db[config["col_name"]]
-                _ = col.estimated_document_count()
-                
-                # 连接成功
-                st.session_state.mongodb_config["connected"] = True
-                st.session_state.mongodb_client = client
-                return True
-                
-            except Exception as e:
-                st.session_state.mongodb_config["error"] = str(e)
-                st.session_state.mongodb_client = None
-                return False
-    return False
+    """检查并在启动时自动连接 MongoDB（从 config.json 读取配置）"""
+    config_path = os.path.join(os.getcwd(), "config.json")
+
+    # === 1. 检查配置文件是否存在 ===
+    if not os.path.exists(config_path):
+        st.error(f"未找到配置文件: {config_path}")
+        return False
+
+    try:
+        # === 2. 读取 JSON 配置 ===
+        with open(config_path, "r", encoding="utf-8") as f:
+            config_data = json.load(f)
+
+        mongodb_config = config_data.get("mongodb", {})
+    except Exception as e:
+        st.error(f"读取配置文件失败: {e}")
+        return False
+
+    # === 3. 检查 auto_connect 标志 ===
+    if not (mongodb_config.get("auto_connect", False) and mongodb_config.get("host")):
+        return False
+
+    # === 4. 检查 session_state 中是否已有连接 ===
+    if "mongodb_config" not in st.session_state or not st.session_state.get("mongodb_client"):
+        try:
+            # === 5. 初始化配置 ===
+            st.session_state.mongodb_config = {
+                "host": mongodb_config.get("host", "localhost"),
+                "port": mongodb_config.get("port", 27017),
+                "username": mongodb_config.get("username", ""),
+                "password": mongodb_config.get("password", ""),
+                "db_name": mongodb_config.get("db_name", "textdb"),
+                "col_name": mongodb_config.get("col_name", "metadata"),
+                "connected": False,
+                "error": ""
+            }
+
+            config = st.session_state.mongodb_config
+
+            # === 6. 构建连接 URI ===
+            if config["username"] and config["password"]:
+                uri = (
+                    f"mongodb://{config['username']}:{config['password']}@"
+                    f"{config['host']}:{config['port']}/{config['db_name']}?authSource=admin"
+                )
+            else:
+                uri = f"mongodb://{config['host']}:{config['port']}/"
+
+            # === 7. 测试连接 ===
+            client = MongoClient(uri, serverSelectionTimeoutMS=3000)
+            db = client[config["db_name"]]
+            col = db[config["col_name"]]
+            _ = col.estimated_document_count()  # 测试是否能正常访问
+
+            # === 8. 连接成功 ===
+            st.session_state.mongodb_config["connected"] = True
+            st.session_state.mongodb_client = client
+            return True
+
+        except Exception as e:
+            st.session_state.mongodb_config["error"] = str(e)
+            st.session_state.mongodb_client = None
+            st.error(f"MongoDB连接失败: {e}")
+            return False
+
+    # 已经有连接，不需要重新连接
+    return True
 
 def config_management_page():
     """配置管理页面"""

@@ -7,7 +7,7 @@ from typing import Dict, Any, Optional
 class ConfigManager:
     """配置管理器，用于保存和加载用户配置"""
     
-    def __init__(self, config_file: str = "milvus_config.json"):
+    def __init__(self, config_file: str = "config.json"):
         """
         初始化配置管理器
         
