@@ -8,6 +8,7 @@ import math
 import time
 from config_manager import config_manager
 
+
 class MilvusManager:
     def __init__(self, host: str = "localhost", port: str = "19530", user: str = "", password: str = ""):
         """
@@ -117,7 +118,8 @@ class MilvusManager:
                     collection_name=self.collection_name,
                     auto_connect=True
                 )
-                st.success("✅ 连接配置已保存，下次启动将自动连接")
+                # st.success("✅ 连接配置已保存，下次启动将自动连接")
+                st.toast("✅ 连接配置已保存，下次启动将自动连接")
             
             # 检查是否存在现有集合
             if self._collection_exists_and_valid():
@@ -129,13 +131,13 @@ class MilvusManager:
                 stats = self.get_collection_stats()
                 num_entities = stats.get('num_entities', 0)
                 
-                st.success(f"✅ 成功连接到Milvus服务器 {self.host}:{self.port}")
+                st.toast(f"✅ 成功连接到Milvus服务器 {self.host}:{self.port}")
                 if num_entities > 0:
-                    st.info(f"🔍 发现现有集合 '{self.collection_name}'，包含 {num_entities:,} 条记录")
+                    st.toast(f"🔍 发现现有集合 '{self.collection_name}'，包含 {num_entities:,} 条记录")
                 else:
-                    st.info(f"📝 发现现有集合 '{self.collection_name}'，但暂无数据")
+                    st.toast(f"📝 发现现有集合 '{self.collection_name}'，但暂无数据")
             else:
-                st.success(f"✅ 成功连接到Milvus服务器 {self.host}:{self.port}")
+                st.toast(f"✅ 成功连接到Milvus服务器 {self.host}:{self.port}")
                 st.info("📋 未发现现有集合，请创建新集合")
             
             return True

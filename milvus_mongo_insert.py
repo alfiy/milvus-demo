@@ -137,27 +137,71 @@ def _ensure_collection_ready(collection):
 
 
 # ----- MongoDB 初始化 -----
+# def get_mongo_collection():
+#     """
+#     从全局 session_state 自动复用连接对象和配置信息，获取集合对象。
+#     """
+#     try:
+#         config = st.session_state.get("mongodb_config", None)
+#         client = st.session_state.get("mongodb_client", None)
+        
+#         if st.session_state.get("mongodb_connected", False):
+#             db = client[config["db_name"]]
+#             col = db[config["col_name"]]
+#             # 测试连接是否有效
+#             _ = col.estimated_document_count()
+#             return col
+#         else:
+#             raise Exception("MongoDB未配置或未连接，请先在 '🍃 MongoDB配置管理' 页面连接MongoDB。")
+            
+#     except Exception as e:
+#         st.error(f"❌ MongoDB连接失败: {e}")
+#         raise
+
 def get_mongo_collection():
     """
     从全局 session_state 自动复用连接对象和配置信息，获取集合对象。
-    """
-    try:
-        config = st.session_state.get("mongodb_config", None)
-        client = st.session_state.get("mongodb_client", None)
-        
-        if config and client and config.get("connected", False):
-            db = client[config["db_name"]]
-            col = db[config["col_name"]]
-            # 测试连接是否有效
-            _ = col.estimated_document_count()
-            return col
-        else:
-            raise Exception("MongoDB未配置或未连接，请先在 '🍃 MongoDB配置管理' 页面连接MongoDB。")
-            
-    except Exception as e:
-        st.error(f"❌ MongoDB连接失败: {e}")
-        raise
 
+    Returns:
+        Collection: MongoDB 集合对象
+
+    Raises:
+        Exception: 当 MongoDB 未连接或连接失效时抛出异常
+    """
+    # 🔧 第一步：检查连接状态
+    if not st.session_state.get("mongodb_connected", False):
+        raise Exception("MongoDB未配置或未连接，请先在 '🍃 MongoDB配置管理' 页面连接MongoDB。")
+
+    # 🔧 第二步：获取配置和客户端（添加空值检查）
+    config = st.session_state.get("mongodb_config")
+    client = st.session_state.get("mongodb_client")
+
+    if not config:
+        st.session_state['mongodb_connected'] = False
+        raise Exception("MongoDB配置信息缺失")
+
+    if not client:
+        st.session_state['mongodb_connected'] = False
+        raise Exception("MongoDB客户端未初始化")
+
+    # 🔧 第三步：获取集合并测试连接
+    try:
+        db_name = config.get("db_name", "textdb")
+        col_name = config.get("col_name", "metadata")
+
+        db = client[db_name]
+        col = db[col_name]
+
+        # 测试连接是否仍然有效
+        _ = col.estimated_document_count()
+
+        return col
+
+    except Exception as e:
+        # 连接失效，更新状态
+        st.session_state['mongodb_connected'] = False
+        st.session_state['mongodb_connect_error'] = str(e)
+        raise Exception(f"MongoDB连接已断开: {e}")
 
 # ----- 批量插入逻辑 -----
 def insert_batch(texts, vectors, metadata_list, collection, mongo_col, batch_size=500):
