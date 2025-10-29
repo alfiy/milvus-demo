@@ -211,19 +211,19 @@ def config_management_page():
     col1, col2, col3, col4 = st.columns(4)
     
     with col1:
-        if st.button("📥 导入配置", width="stretch"):
+        if st.button("📥 导入配置"):
             st.session_state.show_import = True
     
     with col2:
-        if st.button("📤 导出配置", width="stretch"):
+        if st.button("📤 导出配置"):
             st.session_state.show_export = True
     
     with col3:
-        if st.button("🔄 重置配置", width="stretch"):
+        if st.button("🔄 重置配置"):
             st.session_state.show_reset = True
     
     with col4:
-        if st.button("🔃 重新加载", width="stretch"):
+        if st.button("🔃 重新加载"):
             st.rerun()
     
     # 导入配置
@@ -317,26 +317,25 @@ def config_management_page():
     with st.expander("🔍 查看完整配置", expanded=False):
         st.json(current_config)
 
-
-
 def model_manager_page():
     st.markdown("## 🤖 嵌入模型管理")
-    
+
+    # 确保 session_state 里有 VectorProcessor 实例
     if 'vector_processor' not in st.session_state['components']:
         st.session_state['components']['vector_processor'] = VectorProcessor()
     vp = st.session_state['components']['vector_processor']
 
-    # --- 当前模型状态展示 ---
-    st.markdown("### 🤖 当前模型状态")
-    model_config = st.session_state.get('model_config', {})
+    # 1. 读取模型配置信息（来自config.json）
+    model_config = config_manager.get_model_config()
     current_loaded_model = model_config.get("last_used_model", "") if st.session_state.get('model_loaded', False) else ""
-    
+
+    # 2. 当前模型状态区
     col1, col2 = st.columns(2)
     with col1:
         if current_loaded_model:
             st.markdown(f"""
             <div class="model-card">
-                <h4>烙 当前加载的模型</h4>
+                <h4>🤖 当前加载的模型</h4>
                 <p><strong>模型名称:</strong> {current_loaded_model}</p>
                 <p><strong>加载状态:</strong> ✅ 已加载</p>
                 <p><strong>自动加载:</strong> {'✅' if model_config.get('auto_load', False) else '❌'}</p>
@@ -345,11 +344,12 @@ def model_manager_page():
         else:
             st.markdown("""
             <div class="model-card">
-                <h4>烙 当前模型状态</h4>
+                <h4>🤖 当前模型状态</h4>
                 <p><strong>加载状态:</strong> ❌ 未加载</p>
                 <p><strong>提示:</strong> 请选择并加载模型</p>
             </div>
             """, unsafe_allow_html=True)
+
     with col2:
         if current_loaded_model:
             model_info = vp.get_model_info()
@@ -362,13 +362,12 @@ def model_manager_page():
                 </div>
                 """, unsafe_allow_html=True)
     st.markdown("---")
-    st.markdown("### 🤖 模型选择与管理")
+    st.markdown("### ⚙️ 模型选择与管理")
 
-    # ---- 显示模型列表和添加新模型功能 ----
+    # 3. 添加新模型
     st.markdown("#### 🤖 添加新模型")
     new_model_name = st.text_input(
-        "输入 HuggingFace 模型名并下载到本地",
-        "",
+        "输入 HuggingFace 模型名并下载到本地", "",
         help="如：sentence-transformers/paraphrase-MiniLM-L6-v2"
     )
     if st.button("下载模型"):
@@ -382,7 +381,7 @@ def model_manager_page():
                     st.error(msg)
 
     available_models = vp.scan_local_models()
-    st.markdown("#### 🤖 选择并加载模型")
+    st.markdown("#### ⚙️ 选择并加载模型")
     last_used_model = model_config.get("last_used_model", "")
     default_index = 0
     if last_used_model and last_used_model in available_models:
@@ -394,59 +393,181 @@ def model_manager_page():
         index=default_index if available_models else 0,
         help="选择你要用于向量化的嵌入模型"
     )
+
     col1, col2, col3 = st.columns([2, 1, 1])
     with col1:
         auto_load = st.checkbox(
-            "启动时自动加载此模型", 
+            "启动时自动加载此模型",
             value=model_config.get("auto_load", False),
             help="勾选后，应用启动时会自动加载此模型"
         )
     with col2:
-        load_button = st.button("🤖 加载模型", type="primary")
+        load_button = st.button("⚙️ 加载模型", type="primary")
     with col3:
         if current_loaded_model:
-            unload_button = st.button("🤖 卸载模型")
+            unload_button = st.button("⚙️ 卸载模型")
         else:
             unload_button = False
 
-    # 加载模型逻辑
+    # 4. 加载模型（更新session_state与config）
     if load_button:
         with st.spinner("正在加载模型..."):
             vp.model_name = selected_model
             ok, msg = vp.load_model()
             if ok:
                 st.session_state['model_loaded'] = True
-                st.session_state['model_config'] = {
-                    "last_used_model": selected_model,
-                    "auto_load": auto_load
-                }
+                config_manager.update_model_config(selected_model, auto_load)
                 st.success("✅ 模型加载成功")
                 st.rerun()
             else:
                 st.session_state['model_loaded'] = False
                 st.error(f"❌ 模型加载失败: {msg}")
-    # 卸载模型
+
+    # 5. 卸载模型（更新session_state与config）
     if unload_button:
         st.session_state['model_loaded'] = False
-        st.session_state['model_config'] = {
-            "last_used_model": "",
-            "auto_load": auto_load
-        }
+        config_manager.update_model_config("", auto_load)
         st.success("✅ 模型已卸载")
         st.rerun()
 
-    # 更新自动加载设置（当复选框状态改变时）
+    # 6. 检查自动加载复选框更改（只更新auto_load，不动模型名）
+    # 注意不要每次都写，只有更改时写
     if auto_load != model_config.get("auto_load", False):
-        st.session_state['model_config'] = {
-            "last_used_model": last_used_model,
-            "auto_load": auto_load
-        }
+        config_manager.update_model_config(last_used_model, auto_load)
 
     if not available_models:
         st.warning("⚠️ 暂无可用模型，请先添加模型。")
-        st.info("🤖 使用上方的模型添加功能来下载或添加本地模型。")
+        st.info("烙 使用上方的模型添加功能来下载或添加本地模型。")
 
+
+# def model_manager_page():
+#     st.markdown("## 🤖 嵌入模型管理")
     
+#     # 确保 session_state 里有 VectorProcessor 实例
+#     if 'vector_processor' not in st.session_state['components']:
+#         st.session_state['components']['vector_processor'] = VectorProcessor()
+#     vp = st.session_state['components']['vector_processor']
+
+#     # --- 当前模型状态展示 ---
+#     st.markdown("### 🤖 当前模型状态")
+#     model_config = st.session_state.get('model_config', {})
+#     current_loaded_model = model_config.get("last_used_model", "") if st.session_state.get('model_loaded', False) else ""
+    
+#     col1, col2 = st.columns(2)
+#     with col1:
+#         if current_loaded_model:
+#             st.markdown(f"""
+#             <div class="model-card">
+#                 <h4>🤖 当前加载的模型</h4>
+#                 <p><strong>模型名称:</strong> {current_loaded_model}</p>
+#                 <p><strong>加载状态:</strong> ✅ 已加载</p>
+#                 <p><strong>自动加载:</strong> {'✅' if model_config.get('auto_load', False) else '❌'}</p>
+#             </div>
+#             """, unsafe_allow_html=True)
+#         else:
+#             st.markdown("""
+#             <div class="model-card">
+#                 <h4>🤖 当前模型状态</h4>
+#                 <p><strong>加载状态:</strong> ❌ 未加载</p>
+#                 <p><strong>提示:</strong> 请选择并加载模型</p>
+#             </div>
+#             """, unsafe_allow_html=True)
+#     with col2:
+#         if current_loaded_model:
+#             model_info = vp.get_model_info()
+#             if model_info:
+#                 st.markdown(f"""
+#                 <div class="model-card">
+#                     <h4>🤖  模型详情</h4>
+#                     <p><strong>向量维度:</strong> {model_info.get('dimension', 'N/A')}</p>
+#                     <p><strong>模型类型:</strong> {model_info.get('model_type', 'Sentence Transformer')}</p>
+#                 </div>
+#                 """, unsafe_allow_html=True)
+#     st.markdown("---")
+#     st.markdown("### 🤖 模型选择与管理")
+
+#     # ---- 显示模型列表和添加新模型功能 ----
+#     st.markdown("#### 🤖 添加新模型")
+#     new_model_name = st.text_input(
+#         "输入 HuggingFace 模型名并下载到本地",
+#         "",
+#         help="如：sentence-transformers/paraphrase-MiniLM-L6-v2"
+#     )
+#     if st.button("下载模型"):
+#         if new_model_name:
+#             with st.spinner("正在下载模型..."):
+#                 ok, msg = vp.download_model(new_model_name, log_callback=lambda l: st.info(l))
+#                 if ok:
+#                     st.success(msg)
+#                     st.rerun()
+#                 else:
+#                     st.error(msg)
+
+#     available_models = vp.scan_local_models()
+#     st.markdown("#### 🤖 选择并加载模型")
+#     last_used_model = model_config.get("last_used_model", "")
+#     default_index = 0
+#     if last_used_model and last_used_model in available_models:
+#         default_index = available_models.index(last_used_model)
+
+#     selected_model = st.selectbox(
+#         "选择要加载的嵌入模型",
+#         options=available_models,
+#         index=default_index if available_models else 0,
+#         help="选择你要用于向量化的嵌入模型"
+#     )
+#     col1, col2, col3 = st.columns([2, 1, 1])
+#     with col1:
+#         auto_load = st.checkbox(
+#             "启动时自动加载此模型", 
+#             value=model_config.get("auto_load", False),
+#             help="勾选后，应用启动时会自动加载此模型"
+#         )
+#     with col2:
+#         load_button = st.button("🤖 加载模型", type="primary")
+#     with col3:
+#         if current_loaded_model:
+#             unload_button = st.button("🤖 卸载模型")
+#         else:
+#             unload_button = False
+
+#     # 加载模型逻辑
+#     if load_button:
+#         with st.spinner("正在加载模型..."):
+#             vp.model_name = selected_model
+#             ok, msg = vp.load_model()
+#             if ok:
+#                 st.session_state['model_loaded'] = True
+#                 st.session_state['model_config'] = {
+#                     "last_used_model": selected_model,
+#                     "auto_load": auto_load
+#                 }
+#                 st.success("✅ 模型加载成功")
+#                 st.rerun()
+#             else:
+#                 st.session_state['model_loaded'] = False
+#                 st.error(f"❌ 模型加载失败: {msg}")
+#     # 卸载模型
+#     if unload_button:
+#         st.session_state['model_loaded'] = False
+#         st.session_state['model_config'] = {
+#             "last_used_model": "",
+#             "auto_load": auto_load
+#         }
+#         st.success("✅ 模型已卸载")
+#         st.rerun()
+
+#     # 更新自动加载设置（当复选框状态改变时）
+#     if auto_load != model_config.get("auto_load", False):
+#         st.session_state['model_config'] = {
+#             "last_used_model": last_used_model,
+#             "auto_load": auto_load
+#         }
+
+#     if not available_models:
+#         st.warning("⚠️ 暂无可用模型，请先添加模型。")
+#         st.info("🤖 使用上方的模型添加功能来下载或添加本地模型。")
+
 
 def mongodb_config_page():
     st.markdown("## 🍃 MongoDB配置管理")
@@ -817,7 +938,7 @@ def main():
         
         # 模型加载状态
         if st.session_state.get('model_loaded', False):
-            model_config =  st.session_state.get('model_config', {})
+            model_config =  config_manager.get_model_config()
             current_model = model_config.get("last_used_model", "")
             st.success("🤖 模型已加载")
             if current_model:
@@ -1136,7 +1257,7 @@ def data_upload_page():
             - 统一的模型管理确保配置一致性
             """)
         with col2:
-            if st.button("🚀 前往模型管理", type="primary", width="stretch"):
+            if st.button("🚀 前往模型管理", type="primary"):
                 st.switch_page("🤖 嵌入模型管理")
         return
     
@@ -1153,7 +1274,7 @@ def data_upload_page():
         if model_info:
             st.info(f"🔢 向量维度: {model_info.get('dimension', 'N/A')}")
     with col2:
-        if st.button("🔄 切换模型", width="stretch"):
+        if st.button("🔄 切换模型"):
             # 这里可以添加快速切换模型的功能，或者跳转到模型管理页面
             st.info("💡 请到 '🤖 嵌入模型管理' 页面切换模型")
 
@@ -1274,7 +1395,7 @@ def data_upload_page():
         with col1:
             st.info("点击下方按钮开始文本向量化处理，处理后的数据可以保存到Milvus数据库中永久存储")
         with col2:
-            process_button = st.button("🚀 开始向量化处理并持久化", type="primary", width="stretch")
+            process_button = st.button("🚀 开始向量化处理并持久化", type="primary")
         
         if process_button:
             progress_bar = st.progress(0)
@@ -1394,7 +1515,7 @@ def milvus_management_page():
     with col1:
         st.info("💡 连接成功后，配置将自动保存。如果Milvus服务器未设置认证，用户名和密码可以留空")
     with col2:
-        connect_button = st.button("🔗 连接数据库", type="primary", width="stretch")
+        connect_button = st.button("🔗 连接数据库", type="primary")
     
     # 连接操作
     if connect_button:
@@ -1438,7 +1559,7 @@ def milvus_management_page():
         col1, col2, col3 = st.columns(3)
         
         with col1:
-            if st.button("🆕 创建/连接集合", width="stretch"):
+            if st.button("🆕 创建/连接集合"):
                 if st.session_state.data_loaded:
                     with st.spinner("正在创建/连接集合..."):
                         dimension = st.session_state.vectors.shape[1]
@@ -1449,7 +1570,7 @@ def milvus_management_page():
                     st.warning("⚠️ 请先上传并处理数据")
         
         with col2:
-            if st.button("📤 插入数据到Milvus", width="stretch"):
+            if st.button("📤 插入数据到Milvus"):
                 if st.session_state.data_loaded and st.session_state.components['milvus_manager'].collection:
                     with st.spinner("正在插入数据到Milvus..."):
                         success = st.session_state.components['milvus_manager'].insert_vectors(
@@ -1472,7 +1593,7 @@ def milvus_management_page():
             
             # 如果还没有确认，显示删除按钮
             if not st.session_state[delete_collection_key]:
-                if st.button("🗑️ 删除集合", width="stretch", key="delete_collection_btn"):
+                if st.button("🗑️ 删除集合", key="delete_collection_btn"):
                     st.session_state[delete_collection_key] = True
                     st.rerun()
             else:
@@ -1514,10 +1635,10 @@ def milvus_management_page():
         st.markdown("### 🔧 调试工具")
         col1, col2 = st.columns(2)
         with col1:
-            if st.button("🔍 调试集合信息", width="stretch"):
+            if st.button("🔍 调试集合信息"):
                 debug_collection_info("text_vectors")
         with col2:
-            if st.button("🧪 测试连接", width="stretch"):
+            if st.button("🧪 测试连接"):
                 try:
                     collection = get_milvus_collection("text_vectors", 384)
                     if collection:
@@ -1529,111 +1650,6 @@ def milvus_management_page():
     else:
         st.warning("⚠️ 未连接到Milvus数据库")
         st.info("💡 请确保Milvus服务器正在运行，并检查网络连接")
-
-# def search_page():
-#     st.markdown("## 🔍 文本搜索")
-    
-#     # 检查模型是否已加载
-#     if not st.session_state.model_loaded:
-#         st.warning("⚠️ 尚未加载嵌入模型！")
-#         st.info("💡 请先到 '🤖 嵌入模型管理' 页面加载模型，然后再进行搜索。")
-#         return
-    
-#     # 检查MongoDB和Milvus是否已连接
-#     try:
-#         milvus_collection = get_milvus_collection(
-#             collection_name="text_vectors",
-#             dim=st.session_state.vectors.shape[1] if st.session_state.vectors is not None else 384
-#         )
-#         mongo_col = get_mongo_collection()
-#         vector_processor = st.session_state.components["vector_processor"]
-#     except Exception as e:
-#         st.error(f"❌ 初始化搜索组件失败: {e}")
-#         st.info("💡 请确保Milvus和MongoDB都已正确配置和连接")
-#         return
-
-#     # 搜索界面
-#     st.markdown("### 🔍 搜索查询")
-#     col1, col2 = st.columns([3, 1])
-#     with col1:
-#         query = st.text_input(
-#             "输入搜索查询",
-#             placeholder="例如：描述春天的诗句",
-#             help="输入您想要搜索的文本内容，系统会找到语义相似的文本"
-#         )
-#     with col2:
-#         st.write("")  # 占位
-#         search_button = st.button("🚀 开始搜索", type="primary", width="stretch")
-
-#     # 搜索参数
-#     col1, col2 = st.columns(2)
-#     with col1:
-#         top_k = st.slider("返回结果数量", 1, 50, 10, help="设置返回的搜索结果数量")
-#     with col2:
-#         similarity_threshold = st.slider("相似度阈值", 0.0, 1.0, 0.0, 0.1, help="过滤低相似度的结果")
-
-#     # 执行搜索
-#     if search_button and query:
-#         with st.spinner("🔍 正在搜索相关内容..."):
-#             try:
-#                 results = milvus_mongo_semantic_search(query, top_k, milvus_collection, mongo_col, vector_processor)
-#                 # 过滤结果
-#                 filtered_results = [r for r in results if r['score'] >= similarity_threshold]
-#                 if filtered_results:
-#                     st.success(f"🎯 找到 {len(filtered_results)} 个相关结果")
-#                     # 显示搜索统计
-#                     stats = {
-#                         "total_results": len(filtered_results),
-#                         "avg_score": np.mean([r['score'] for r in filtered_results]) if filtered_results else 0,
-#                         "max_score": np.max([r['score'] for r in filtered_results]) if filtered_results else 0,
-#                         "min_score": np.min([r['score'] for r in filtered_results]) if filtered_results else 0,
-#                     }
-#                     st.markdown("### 📊 搜索统计")
-#                     col1, col2, col3, col4 = st.columns(4)
-#                     with col1:
-#                         st.metric("结果数量", stats.get('total_results', 0))
-#                     with col2:
-#                         st.metric("平均相似度", f"{stats.get('avg_score', 0):.3f}")
-#                     with col3:
-#                         st.metric("最高相似度", f"{stats.get('max_score', 0):.3f}")
-#                     with col4:
-#                         st.metric("最低相似度", f"{stats.get('min_score', 0):.3f}")
-
-#                     # 显示搜索结果
-#                     st.markdown("### 🎯 搜索结果")
-#                     for i, result in enumerate(filtered_results):
-#                         similarity_pct = result['score'] * 100
-#                         if similarity_pct >= 80:
-#                             color = "#28a745"  # 绿色
-#                         elif similarity_pct >= 60:
-#                             color = "#ffc107"  # 黄色
-#                         else:
-#                             color = "#dc3545"  # 红色
-#                         with st.expander(f"📄 结果 {i+1} - 相似度: {similarity_pct:.1f}%", expanded=i < 3):
-#                             col1, col2 = st.columns([3, 1])
-#                             with col1:
-#                                 st.markdown("**📝 文本内容:**")
-#                                 st.write(result['text'])
-#                                 if result.get('metadata'):
-#                                     st.markdown("**📋 元数据:**")
-#                                     st.json(result['metadata'])
-#                             with col2:
-#                                 st.markdown(f"""
-#                                 <div style="text-align: center; padding: 1rem; background: {color}20; border-radius: 8px; border: 2px solid {color};">
-#                                     <h3 style="color: {color}; margin: 0;">{similarity_pct:.1f}%</h3>
-#                                     <p style="margin: 0; color: {color};">相似度</p>
-#                                 </div>
-#                                 """, unsafe_allow_html=True)
-#                 else:
-#                     st.info("🔍 未找到满足条件的结果，请尝试：")
-#                     st.markdown("""
-#                     - 降低相似度阈值
-#                     - 使用不同的关键词
-#                     - 检查输入的查询内容
-#                     """)
-#             except Exception as e:
-#                 st.error(f"❌ 搜索失败: {e}")
-#                 st.exception(e)
 
 def search_page():
     """文本搜索页面 - 修复版本"""
@@ -1716,7 +1732,7 @@ def search_page():
         )
     with col2:
         st.write("")  # 占位
-        search_button = st.button("🔍 开始搜索", type="primary", width="stretch")
+        search_button = st.button("🔍 开始搜索", type="primary")
 
     # 搜索参数
     col1, col2 = st.columns(2)
@@ -1848,7 +1864,7 @@ def clustering_page():
                             yaxis_title="轮廓系数",
                             showlegend=False
                         )
-                        st.plotly_chart(fig, width="stretch")
+                        st.plotly_chart(fig)
                         
                         optimal_k = k_range[np.argmax(silhouette_scores)]
                         max_score = max(silhouette_scores)
@@ -1864,7 +1880,7 @@ def clustering_page():
     # 执行聚类
     st.markdown("### 🚀 开始聚类")
     
-    if st.button("🎯 执行聚类分析", type="primary", width="stretch"):
+    if st.button("🎯 执行聚类分析", type="primary"):
         with st.spinner("正在进行聚类分析..."):
             try:
                 if clustering_method == "K-means聚类":
@@ -1879,7 +1895,7 @@ def clustering_page():
                         reduced_vectors = st.session_state.components['clustering_analyzer'].reduce_dimensions()
                         if reduced_vectors.size > 0:
                             fig = st.session_state.components['clustering_analyzer'].create_cluster_visualization()
-                            st.plotly_chart(fig, width="stretch")
+                            st.plotly_chart(fig)
                     
                     # 聚类摘要
                     st.markdown("### 📋 聚类摘要")
