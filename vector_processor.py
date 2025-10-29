@@ -43,7 +43,7 @@ class VectorProcessor:
         self,
         model_name: str,
         log_callback: Optional[Callable[[str], None]] = None,
-    ) -> (bool, str):
+    ) -> tuple[bool,str]:
         """
         下载模型到本地缓存目录。如有log回调参数则每输出一行调用一次
         """
@@ -73,7 +73,7 @@ class VectorProcessor:
         """设置要加载的模型名"""
         self.model_name = model_name
 
-    def load_model(self) -> (bool, str):
+    def load_model(self) -> tuple[bool, str]:
         """
         加载 snapshot 目录下的模型，仅返回运行结果和提示信息
         """
@@ -128,7 +128,7 @@ class VectorProcessor:
                     continue
         return json_data
 
-    def process_json_data(self, json_data: List[Dict[str, Any]]) -> (List[str], np.ndarray, List[dict]):
+    def process_json_data(self, json_data: List[Dict[str, Any]]) -> tuple[List[str], np.ndarray, List[dict]]:
         """
         处理json数据，返回：文本列表，向量数组，元数据列表
         """

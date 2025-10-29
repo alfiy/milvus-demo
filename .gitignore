@@ -1,3 +1,4 @@
 emmbedding_model_cache/
 hf_embedding_cache/
 __pycache__/
+.venv/
