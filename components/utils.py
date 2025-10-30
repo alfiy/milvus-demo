@@ -1,9 +1,6 @@
 from pymongo import MongoClient
-from components.config_manager import config_manager
 import numpy as np
 import streamlit as st
-import threading
-import time
 
 
 # 自动MongoDB连接

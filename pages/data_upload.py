@@ -1,6 +1,4 @@
 import streamlit as st
-from components.config_manager import config_manager
-from components.vector_processor import VectorProcessor
 from components.milvus_mongo_insert import milvus_mongo_upload
 
 

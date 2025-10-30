@@ -1,6 +1,4 @@
 import streamlit as st
-from components.config_manager import config_manager
-from components.vector_processor import VectorProcessor
 
 if "components" not in st.session_state:
     st.session_state["components"] = {}

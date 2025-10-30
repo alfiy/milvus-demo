@@ -2,7 +2,7 @@
 import json
 import os
 import streamlit as st
-from typing import Dict, Any, Optional
+from typing import Dict, Any
 
 class ConfigManager:
     """配置管理器，用于保存和加载用户配置"""

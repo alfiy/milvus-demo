@@ -1,5 +1,4 @@
 import streamlit as st
-
 from components.milvus_mongo_insert import get_milvus_collection, get_mongo_collection
 
 

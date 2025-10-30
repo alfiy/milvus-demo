@@ -2,10 +2,9 @@
 from pymilvus import connections, Collection, CollectionSchema, FieldSchema, DataType, utility
 import numpy as np
 import streamlit as st
-from typing import List, Dict, Any, Optional
+from typing import List, Dict, Any
 import json
 import math
-import time
 from components.config_manager import config_manager
 
 

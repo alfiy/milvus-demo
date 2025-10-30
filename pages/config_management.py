@@ -1,6 +1,5 @@
 import streamlit as st
 from components.config_manager import config_manager
-from components.vector_processor import VectorProcessor
 
 
 def config_management_page():

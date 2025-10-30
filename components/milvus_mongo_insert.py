@@ -6,7 +6,6 @@ Milvus + MongoDB 批量插入脚本
 """
 
 from pymilvus import connections, Collection, FieldSchema, CollectionSchema, DataType, utility
-from pymongo import MongoClient
 import numpy as np
 import streamlit as st
 import json

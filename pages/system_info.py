@@ -1,5 +1,4 @@
 import streamlit as st
-from components.utils import get_mongodb_data
 
 def system_info_page():
     st.markdown("## ℹ️ 系统信息")
