@@ -6,7 +6,7 @@ from typing import List, Dict, Any, Optional
 import json
 import math
 import time
-from config_manager import config_manager
+from components.config_manager import config_manager
 
 
 class MilvusManager:

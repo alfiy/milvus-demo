@@ -1,6 +1,6 @@
 {
   "milvus": {
-    "host": "192.168.60.121",
+    "host": "localhost",
     "port": "19530",
     "user": "",
     "password": "",
@@ -8,7 +8,7 @@
     "auto_connect": true
   },
   "mongodb": {
-    "host": "192.168.60.121",
+    "host": "localhost",
     "port": 27017,
     "username": "test",
     "password": "password",
