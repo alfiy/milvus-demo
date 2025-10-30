@@ -4,26 +4,17 @@ import streamlit as st
 
 
 # 自动MongoDB连接
-def auto_connect_mongodb():
+def auto_connect_mongodb(mongodb_config):
     """
-    初始化 MongoDB 连接，仅设置 session_state，不做 st.xxx 调用。
-    调用后可通过 st.session_state['mongodb_connected'] 和 st.session_state['mongodb_connect_error'] 判断连接状态。
+    初始化 MongoDB 连接，返回三元组：(连接成功, 错误消息, client对象)
+    外部调用无需直接写入 session_state，由主入口统一赋值可以防止覆盖。
     """
- 
-    # 直接从已初始化的 session_state 读取配置
-    mongodb_config = st.session_state.get('mongodb_config', {})
-    if not mongodb_config or not mongodb_config.get("host"):
-        st.session_state['mongodb_connected'] = False
-        st.session_state['mongodb_connect_error'] = "缺少 MongoDB 配置"
-        st.session_state['mongodb_client'] = None
-        return False
+    from pymongo import MongoClient
 
-    # 已有连接直接复用
-    if st.session_state.get('mongodb_connected') and st.session_state.get('mongodb_client') is not None:
-        return True
+    if not mongodb_config or not mongodb_config.get("host"):
+        return False, "缺少 MongoDB 配置", None
 
     try:
-        # 构建MongoDB URI
         username = mongodb_config.get("username", "")
         password = mongodb_config.get("password", "")
         host = mongodb_config.get("host", "localhost")
@@ -40,18 +31,10 @@ def auto_connect_mongodb():
         db = client[db_name]
         col = db[col_name]
         _ = col.estimated_document_count()
-
-        # 写入连接状态到 session
-        st.session_state['mongodb_connected'] = True
-        st.session_state['mongodb_connect_error'] = None
-        st.session_state['mongodb_client'] = client
-        return True
-
+        return True, None, client
     except Exception as e:
-        st.session_state['mongodb_connected'] = False
-        st.session_state['mongodb_connect_error'] = str(e)
-        st.session_state['mongodb_client'] = None
-        return False
+        return False, str(e), None
+
 
 def get_mongodb_data(mongodb_config):
     """从MongoDB读取文本与向量数据，并统计"""

@@ -10,7 +10,7 @@ def config_management_page():
     st.markdown("### 📊 当前配置状态")
     
     # 获取当前配置
-    current_config = st.session_state.current_config
+    current_config = st.session_state.get("current_config", {})
     milvus_config = current_config.get("milvus", {})
     mongodb_config = current_config.get("mongodb", {})
     model_config = current_config.get("model", {})

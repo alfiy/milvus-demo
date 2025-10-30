@@ -70,7 +70,7 @@ def home_page():
             st.markdown(f"""
             <div class="persistence-status status-warning">
                 <h4>⚠️ MongoDB未连接</h4>
-                <p>请到 ' MongoDB配置管理' 页面配置连接</p>
+                <p>请到 '🍃 MongoDB配置管理' 页面配置连接</p>
                 {"<p style='color:red'>" + error_info + "</p>" if error_info else ""}
             </div>
             """, unsafe_allow_html=True)

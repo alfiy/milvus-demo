@@ -45,14 +45,20 @@ def system_info_page():
 
     with col2:
         st.markdown("#### 🍃  MongoDB状态")
-        # 新写法：实时查询显示
+        mongodb_connected = st.session_state.get("mongodb_connected", False)
+        mongodb_connect_error = st.session_state.get("mongodb_connect_error", None)
         mongo_data = st.session_state.get("mongo_data", {})
-        if mongo_data.get("connected", False):
-            st.success(f"✅ MongoDB数据库：{mongo_data['count']:,} 条记录")
+        
+        if mongodb_connected:
+            record_count = mongo_data.get("count", len(mongo_data.get("texts", [])))
+            st.success(f"✅ MongoDB数据库已连接：{record_count:,} 条记录")
         else:
             st.warning("⚠️ MongoDB数据库：未连接")
+            if mongodb_connect_error:
+                st.error(f"❌ MongoDB数据库连接异常: {mongodb_connect_error}")
+        # 如果有数据层面的异常也展示（与业务一致）
         if mongo_data.get("error"):
-            st.error(f"❌ MongoDB数据库异常: {mongo_data['error']}")
+            st.error(f"❌ MongoDB数据库数据异常: {mongo_data['error']}")
 
     # 模型信息
     st.markdown("### 🤖 向量化模型信息")
