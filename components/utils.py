@@ -1,6 +1,5 @@
 from pymongo import MongoClient
 import numpy as np
-import streamlit as st
 
 
 # 自动MongoDB连接
@@ -34,6 +33,47 @@ def auto_connect_mongodb(mongodb_config):
         return True, None, client
     except Exception as e:
         return False, str(e), None
+
+# mongoDB状态
+def get_mongodb_stats(mongodb_client, mongodb_config):
+    """
+    统计MongoDB主业务集合的状态与数据量。
+    - 输入: mongodb_client (pymongo.MongoClient对象), mongodb_config（dict配置）
+    - 返回: dict {connected: bool, error: str or None, count: int, sample_texts: list, vector_info: str, vector_size: float}
+    """
+    stats = {
+        "connected": False,
+        "error": None,
+        "count": 0,
+        "sample_texts": [],
+        "vector_info": "N/A",
+        "vector_size": 0.0
+    }
+
+    if not mongodb_client or not mongodb_config:
+        stats["error"] = "缺少连接对象或配置"
+        return stats
+
+    try:
+        db = mongodb_client[mongodb_config.get("db_name", "textdb")]
+        col = db[mongodb_config.get("col_name", "metadata")]
+        stats["count"] = col.count_documents({})
+        stats["connected"] = True
+
+        sample_docs = list(col.find({}, {"text": 1}).limit(10))
+        stats["sample_texts"] = [doc.get("text", "") for doc in sample_docs]
+
+        # 检查向量字段
+        vector_sample = col.find_one({"vector": {"$exists": True}}, {"vector": 1})
+        if vector_sample and vector_sample.get("vector") is not None:
+            import numpy as np
+            sample_vector = np.array(vector_sample["vector"])
+            stats["vector_info"] = sample_vector.shape[0] if sample_vector.ndim > 0 else "N/A"
+            stats["vector_size"] = sample_vector.nbytes / 1024 / 1024
+    except Exception as e:
+        stats["error"] = str(e)
+
+    return stats
 
 
 def get_mongodb_data(mongodb_config):
