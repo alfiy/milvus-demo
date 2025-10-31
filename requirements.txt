@@ -12,3 +12,4 @@ umap-learn
 torch
 transformers
 pymongo
+tbb
