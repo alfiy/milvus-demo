@@ -185,8 +185,8 @@ def data_upload_page():
                 texts_clean = [t[0] if isinstance(t, list) and len(t) > 0 else t for t in texts]
                 texts_clean = [str(t) for t in texts_clean if isinstance(t, str)]
 
-                print("DEBUG texts_clean type前5:", [(t, type(t)) for t in texts_clean[:5]])
-                print("DEBUG texts_clean结构:", texts_clean[:5])
+                # print("DEBUG texts_clean type前5:", [(t, type(t)) for t in texts_clean[:5]])
+                # print("DEBUG texts_clean结构:", texts_clean[:5])
 
                 # 开始插入数据
                 st.session_state.texts = texts

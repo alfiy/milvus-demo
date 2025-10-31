@@ -1,4 +1,5 @@
 import streamlit as st
+from components.utils import get_mongodb_stats
 
 if "components" not in st.session_state:
     st.session_state["components"] = {}
@@ -17,6 +18,7 @@ def home_page():
     st.markdown("### ⚙️ 配置状态")
 
     col1, col2, col3 = st.columns(3)
+
     with col1:
         milvus_status = "✅ 已配置" if milvus_config.get("host") else "❌ 未配置"
         auto_connect = "🔄 自动连接" if milvus_config.get("auto_connect", False) else "⚠️ 手动连接"
@@ -114,9 +116,14 @@ def home_page():
     st.markdown("### 📊 系统状态")
     col1, col2, col3, col4 = st.columns(4)
 
+    # 统一统计MongoDB业务状态
+    mongodb_client = st.session_state.get("mongodb_client", None)
+    mongodb_config = st.session_state.get("mongodb_config", {})
+    mongo_stats = get_mongodb_stats(mongodb_client, mongodb_config)
+    
     with col1:
-        if mongo_data.get("connected", False):
-            data_count = len(mongo_data.get('texts', []))
+        if mongo_stats["connected"]:
+            data_count = mongo_stats['count']
             status_text = "数据库记录数量"
         else:
             data_count = 0

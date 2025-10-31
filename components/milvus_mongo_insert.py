@@ -229,9 +229,9 @@ def insert_batch(texts, vectors, metadata_list, collection, mongo_col, batch_siz
             except Exception as e:
                 st.error(f"❌ Milvus插入失败: {e}")
                 st.error(f"vector shape={batch_vectors.shape}, text count={len(batch_texts)}, metadata count={len(batch_metadata)}")
-                print("❌ DEBUG - milvus_data[0]:", milvus_data[0] if milvus_data else None)
-                print("❌ DEBUG - vector[0] type:", type(milvus_data[0]['vector']) if milvus_data else None)
-                print("❌ DEBUG - vector[0][0] type:", type(milvus_data[0]['vector'][0]) if milvus_data and milvus_data[0]['vector'] else None)
+                # print("❌ DEBUG - milvus_data[0]:", milvus_data[0] if milvus_data else None)
+                # print("❌ DEBUG - vector[0] type:", type(milvus_data[0]['vector']) if milvus_data else None)
+                # print("❌ DEBUG - vector[0][0] type:", type(milvus_data[0]['vector'][0]) if milvus_data and milvus_data[0]['vector'] else None)
                 raise
             
             # 插入 MongoDB

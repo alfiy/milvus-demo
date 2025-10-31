@@ -1,6 +1,61 @@
 from pymongo import MongoClient
 import numpy as np
+import streamlit as st
 
+
+def milvus_mongo_semantic_search(query, top_k, milvus_collection, mongo_col, vector_processor):
+    """
+    使用 Milvus + MongoDB 进行语义搜索 
+    """
+    try:
+        # 1️⃣ 将查询文本向量化
+        query_vector = vector_processor.encode([query])[0]
+
+        # 2️⃣ 检查集合是否存在且已连接
+        if not milvus_collection:
+            st.error("❌ Milvus 集合未初始化，请先创建集合或导入数据")
+            return []
+
+        # 3️⃣ 执行 Milvus 搜索
+        search_params = {
+            "metric_type": "COSINE",
+            "params": {"nprobe": 10}
+        }
+
+        results = milvus_collection.search(
+            data=[query_vector.tolist()],
+            anns_field="vector",           # ✅ 字段名改为 "vector"
+            param=search_params,
+            limit=top_k,
+            output_fields=["text", "metadata"]
+        )
+
+        # 4️⃣ 整理 Milvus 搜索结果
+        ids, scores = [], []
+        for hits in results:
+            for hit in hits:
+                ids.append(hit.id)
+                scores.append(float(hit.distance))
+
+        # 5️⃣ 查询 MongoDB 获取元数据
+        docs = list(mongo_col.find({"_id": {"$in": ids}}))
+        id2doc = {str(doc["_id"]): doc for doc in docs}
+
+        combined = []
+        for id_, score in zip(ids, scores):
+            doc = id2doc.get(str(id_), {})
+            combined.append({
+                "id": id_,
+                "score": score,
+                "text": doc.get("text", ""),
+                "metadata": doc.get("metadata", {}),
+            })
+
+        return combined
+
+    except Exception as e:
+        st.error(f"❌ 搜索失败: {e}")
+        return []
 
 # 自动MongoDB连接
 def auto_connect_mongodb(mongodb_config):

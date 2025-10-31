@@ -63,32 +63,48 @@ def clustering_page():
     
     # 执行聚类
     st.markdown("### 🚀 开始聚类")
-    
-    if st.button("🎯 执行聚类分析", type="primary"):
+
+    if st.button(" 执行聚类分析", type="primary"):
         with st.spinner("正在进行聚类分析..."):
+            # Step 1. 从 Milvus 数据库获得所有向量和文本、元数据
+            # 假设 milvus_manager 提供方法 get_all_vectors_and_metadata()
+            # 或者项目中实际接口类似如下：
+            vectors, texts, metadata = milvus_manager.get_all_vectors_and_metadata()
+            # 如果没有 texts/metadata，可以从 MongoDB/dataset 查询
+
+            # Step 2. 判空和异常处理
+            if vectors is None or len(vectors) == 0:
+                st.error("❌ 未查询到聚类分析所需的数据，请先上传并持久化。")
+                return
+            if texts is None or len(texts) != len(vectors):
+                st.warning("⚠️ 部分文本或元数据缺失，聚类效果可能受到影响。")
+            # 确保 metadata 长度一致，不然可用 [{}]*len(vectors) 占位
+
+            # Step 3. 加载数据到 clustering_analyzer
+            clustering_analyzer = st.session_state.components['clustering_analyzer']
+            clustering_analyzer.load_data(vectors, texts, metadata)
+
+            # Step 4. 聚类业务逻辑保持不变
             try:
                 if clustering_method == "K-means聚类":
-                    labels = st.session_state.components['clustering_analyzer'].perform_kmeans_clustering(n_clusters)
+                    labels = clustering_analyzer.perform_kmeans_clustering(n_clusters)
                 else:
-                    labels = st.session_state.components['clustering_analyzer'].perform_dbscan_clustering(eps, min_samples)
+                    labels = clustering_analyzer.perform_dbscan_clustering(eps, min_samples)
                 
                 if len(labels) > 0:
-                    # 降维可视化
                     st.markdown("### 📊 聚类可视化")
                     with st.spinner("正在生成可视化图表..."):
-                        reduced_vectors = st.session_state.components['clustering_analyzer'].reduce_dimensions()
+                        reduced_vectors = clustering_analyzer.reduce_dimensions()
                         if reduced_vectors.size > 0:
-                            fig = st.session_state.components['clustering_analyzer'].create_cluster_visualization()
+                            fig = clustering_analyzer.create_cluster_visualization()
                             st.plotly_chart(fig)
                     
-                    # 聚类摘要
                     st.markdown("### 📋 聚类摘要")
-                    cluster_summary = st.session_state.components['clustering_analyzer'].get_cluster_summary()
-                    
-                    # 显示聚类统计
+                    cluster_summary = clustering_analyzer.get_cluster_summary()
+                    # 后续摘要可视化逻辑不变
                     n_clusters_found = len(cluster_summary)
                     n_noise = cluster_summary.get('-1', {}).get('size', 0) if '-1' in cluster_summary else 0
-                    
+
                     col1, col2, col3 = st.columns(3)
                     with col1:
                         st.metric("发现聚类数", n_clusters_found - (1 if n_noise > 0 else 0))
@@ -96,19 +112,67 @@ def clustering_page():
                         st.metric("噪声点数", n_noise)
                     with col3:
                         st.metric("聚类覆盖率", f"{((len(labels) - n_noise) / len(labels) * 100):.1f}%")
-                    
-                    # 显示每个聚类的详细信息
+
                     for cluster_id, info in cluster_summary.items():
                         if cluster_id == '-1':
-                            title = f"🔹 噪声点 ({info['size']} 个样本, {info['percentage']:.1f}%)"
+                            title = f" 噪声点 ({info['size']} 个样本, {info['percentage']:.1f}%)"
                         else:
-                            title = f"🎯 聚类 {cluster_id} ({info['size']} 个样本, {info['percentage']:.1f}%)"
-                        
+                            title = f" 聚类 {cluster_id} ({info['size']} 个样本, {info['percentage']:.1f}%)"
                         with st.expander(title):
-                            st.markdown("**📝 样本文本:**")
+                            st.markdown("** 样本文本:**")
                             for j, text in enumerate(info['sample_texts']):
                                 st.write(f"{j+1}. {text}")
-                        
+                else:
+                    st.error("❌ 聚类未产生结果，请检查数据。")
             except Exception as e:
                 st.error(f"❌ 聚类分析失败: {e}")
                 st.exception(e)
+    
+    # if st.button("🎯 执行聚类分析", type="primary"):
+    #     with st.spinner("正在进行聚类分析..."):
+    #         try:
+    #             if clustering_method == "K-means聚类":
+    #                 labels = st.session_state.components['clustering_analyzer'].perform_kmeans_clustering(n_clusters)
+    #             else:
+    #                 labels = st.session_state.components['clustering_analyzer'].perform_dbscan_clustering(eps, min_samples)
+                
+    #             if len(labels) > 0:
+    #                 # 降维可视化
+    #                 st.markdown("### 📊 聚类可视化")
+    #                 with st.spinner("正在生成可视化图表..."):
+    #                     reduced_vectors = st.session_state.components['clustering_analyzer'].reduce_dimensions()
+    #                     if reduced_vectors.size > 0:
+    #                         fig = st.session_state.components['clustering_analyzer'].create_cluster_visualization()
+    #                         st.plotly_chart(fig)
+                    
+    #                 # 聚类摘要
+    #                 st.markdown("### 📋 聚类摘要")
+    #                 cluster_summary = st.session_state.components['clustering_analyzer'].get_cluster_summary()
+                    
+    #                 # 显示聚类统计
+    #                 n_clusters_found = len(cluster_summary)
+    #                 n_noise = cluster_summary.get('-1', {}).get('size', 0) if '-1' in cluster_summary else 0
+                    
+    #                 col1, col2, col3 = st.columns(3)
+    #                 with col1:
+    #                     st.metric("发现聚类数", n_clusters_found - (1 if n_noise > 0 else 0))
+    #                 with col2:
+    #                     st.metric("噪声点数", n_noise)
+    #                 with col3:
+    #                     st.metric("聚类覆盖率", f"{((len(labels) - n_noise) / len(labels) * 100):.1f}%")
+                    
+    #                 # 显示每个聚类的详细信息
+    #                 for cluster_id, info in cluster_summary.items():
+    #                     if cluster_id == '-1':
+    #                         title = f"🔹 噪声点 ({info['size']} 个样本, {info['percentage']:.1f}%)"
+    #                     else:
+    #                         title = f"🎯 聚类 {cluster_id} ({info['size']} 个样本, {info['percentage']:.1f}%)"
+                        
+    #                     with st.expander(title):
+    #                         st.markdown("**📝 样本文本:**")
+    #                         for j, text in enumerate(info['sample_texts']):
+    #                             st.write(f"{j+1}. {text}")
+                        
+    #         except Exception as e:
+    #             st.error(f"❌ 聚类分析失败: {e}")
+    #             st.exception(e)

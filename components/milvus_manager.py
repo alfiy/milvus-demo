@@ -28,6 +28,54 @@ class MilvusManager:
         if saved_config.get("auto_connect", False):
             self.connect()
     
+    def get_all_vectors_and_metadata(self):
+        """
+        安全批量拉取所有向量、文本和元数据
+        """
+        # ----- STEP 1: 获取所有主键id -----
+        # 注意：只适合数据量不大的情况，如超大建议分页并优化
+        # 如主键不是"id"，请改成你的主键字段名，如 pk
+
+        # 获取全部id列表
+        # 这里用一个“必为真”的条件，例如 id >= 0
+        try:
+            id_results = self.collection.query(
+                expr="id >= 0",            # 修改为你的主键名称和合理条件
+                output_fields=["id"],      # 仅输出主键方便收集
+            )
+        except Exception as e:
+            print(f"Milvus 获取ID列表失败: {e}")
+            return None, None, None
+        
+        if not id_results or len(id_results) == 0:
+            return None, None, None
+        
+        all_ids = [r["id"] for r in id_results]
+
+        # ----- STEP 2: 分批按主键批量拉取所有内容 -----
+        BATCH_SIZE = 500
+        vectors, texts, metadata = [], [], []
+        for i in range(0, len(all_ids), BATCH_SIZE):
+            batch_ids = all_ids[i:i+BATCH_SIZE]
+            # 组装 expr
+            expr = f"id in {batch_ids}"
+            try:
+                batch_result = self.collection.query(
+                    expr=expr,
+                    output_fields=["vector", "text", "metadata"]
+                )
+                for r in batch_result:
+                    vectors.append(r.get("vector"))
+                    texts.append(r.get("text"))
+                    metadata.append(r.get("metadata"))
+            except Exception as e:
+                print(f"Milvus 批量拉取数据失败: {e}")
+                continue
+
+        # ----- STEP 3: 组装和返回-----
+        vectors = np.array(vectors)
+        return vectors, texts, metadata
+    
     def get_collection_object(self):
         """
         重新获取、返回当前 collection 实例（如集合刚刚创建或被重建时调用）

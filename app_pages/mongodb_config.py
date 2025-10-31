@@ -17,8 +17,7 @@ def mongodb_config_page():
             "col_name": saved_config.get("col_name", "metadata"),
             "auto_connect": saved_config.get("auto_connect", False)
         }
-    # 自动连接（只需顶部运行一次即可）
-    # auto_connect_mongodb()
+ 
     mongodb_config = st.session_state["mongodb_config"]
 
     # 显示当前连接状态
@@ -83,7 +82,7 @@ def mongodb_config_page():
         # 1. 保存临时输入到 session
         st.session_state["mongodb_config"] = config_input
         # 2. 用全局函数检测连接写入全局状态
-        auto_connect_mongodb()
+        auto_connect_mongodb(mongodb_config)
         # 3. 配置持久化
         config_manager.update_mongodb_config(**config_input)
         # 4. 刷新页面
@@ -96,7 +95,7 @@ def mongodb_config_page():
         co1, co2, co3 = st.columns(3)
         with co1:
             if st.button("🔄 重新连接"):
-                auto_connect_mongodb()
+                auto_connect_mongodb(mongodb_config)
                 st.rerun()
         with co2:
             if st.button("🧪 测试数据库"):

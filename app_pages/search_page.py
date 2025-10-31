@@ -1,5 +1,7 @@
 import streamlit as st
 from components.milvus_mongo_insert import get_milvus_collection, get_mongo_collection
+from components.utils import milvus_mongo_semantic_search
+import numpy as np
 
 
 def search_page():
