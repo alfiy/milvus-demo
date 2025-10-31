@@ -1,4 +1,4 @@
-# milvus_manager_enhanced.py
+# milvus_manager.py
 from pymilvus import connections, Collection, CollectionSchema, FieldSchema, DataType, utility
 import numpy as np
 import streamlit as st
@@ -27,6 +27,21 @@ class MilvusManager:
         # 如果配置了自动连接，则尝试连接
         if saved_config.get("auto_connect", False):
             self.connect()
+    
+    def get_collection_object(self):
+        """
+        重新获取、返回当前 collection 实例（如集合刚刚创建或被重建时调用）
+        """
+        if not hasattr(self, "collection_name") or not self.collection_name:
+            raise ValueError("MilvusManager: collection_name 尚未设置或无效")
+        try:
+            col = Collection(self.collection_name)
+            self.collection = col
+            return col
+        except Exception as e:
+            self.collection = None
+            print(f"MilvusManager: 获取Collection失败, err={e}")
+            return None
     
     def _collection_exists_and_valid(self) -> bool:
         """
@@ -309,11 +324,11 @@ class MilvusManager:
                 batch_metadata = metadata[start_idx:end_idx]
                 
                 # 准备插入数据
-                data = [
-                    batch_texts,
-                    batch_vectors.tolist(),
-                    [json.dumps(meta, ensure_ascii=False) for meta in batch_metadata]
-                ]
+                data = {
+                    "text": batch_texts,
+                    "vector": batch_vectors.tolist(),
+                    "metadata": [json.dumps(meta, ensure_ascii=False) for meta in batch_metadata]
+                }
                 
                 try:
                     # 插入当前批次
@@ -342,17 +357,16 @@ class MilvusManager:
                         for sub_start in range(0, len(batch_texts), sub_batch_size):
                             sub_end = min(sub_start + sub_batch_size, len(batch_texts))
                             
-                            sub_data = [
-                                batch_texts[sub_start:sub_end],
-                                batch_vectors[sub_start:sub_end].tolist(),
-                                [json.dumps(meta, ensure_ascii=False) for meta in batch_metadata[sub_start:sub_end]]
-                            ]
+                            sub_data = {
+                                "text": batch_texts[sub_start:sub_end],
+                                "vector": batch_vectors[sub_start:sub_end].tolist(),
+                                "metadata": [json.dumps(meta, ensure_ascii=False) for meta in batch_metadata[sub_start:sub_end]]
+                            }
                             
                             try:
                                 mr = self.collection.insert(sub_data)
                                 self.collection.flush()  # 确保每个子批次都持久化
                                 inserted_count += (sub_end - sub_start)
-                                
                                 status_text.text(f"✅ 已插入 {inserted_count:,}/{total_records:,} 条记录 (子批次处理中...)")
                                 
                             except Exception as sub_error:

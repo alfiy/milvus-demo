@@ -48,10 +48,17 @@ if "search_engine" not in st.session_state["components"]:
     st.session_state["components"]["search_engine"] = SearchEngine()
 if "clustering_analyzer" not in st.session_state["components"]:
     st.session_state["components"]["clustering_analyzer"] = ClusteringAnalyzer()
+if "model_config" not in st.session_state or not isinstance(st.session_state["model_config"], dict):
+    st.session_state["model_config"] = config_manager.get_model_config()
+
+
 
 # ===== 4. 自动加载模型（如配置开启） =====
 def check_and_load_model_on_startup():
-    model_config = st.session_state.get('model_config', {})
+    raw_model_config = st.session_state.get('model_config', {})
+    # 强制类型校正
+    model_config = raw_model_config if isinstance(raw_model_config, dict) else {}
+    
     if not model_config.get("auto_load", False):
         return
     last_used_model = model_config.get("last_used_model", "")
@@ -99,29 +106,29 @@ with st.sidebar:
 
 # ===== 8. 页面路由 =====
 if page == "🏠 首页":
-    from pages.homepage import home_page
+    from app_pages.homepage import home_page
     home_page()
 elif page == "⚙️ 配置管理":
-    from pages.config_management import config_management_page
+    from app_pages.config_management import config_management_page
     config_management_page()
 elif page == "🤖 模型管理":
-    from pages.model_manager import model_manager_page
+    from app_pages.model_manager import model_manager_page
     model_manager_page()
 elif page == "📊 数据上传与处理":
-    from pages.data_upload import data_upload_page
+    from app_pages.data_upload import data_upload_page
     data_upload_page()
 elif page == "🍃 MongoDB管理":
-    from pages.mongodb_config import mongodb_config_page
+    from app_pages.mongodb_config import mongodb_config_page
     mongodb_config_page()
 elif page == "🗄️ Milvus管理":
-    from pages.milvus_management import milvus_management_page
+    from app_pages.milvus_management import milvus_management_page
     milvus_management_page()
 elif page == "🔍 搜索":
-    from pages.search_page import search_page
+    from app_pages.search_page import search_page
     search_page()
 elif page == "🎯 聚类分析":
-    from pages.clustering_page import clustering_page
+    from app_pages.clustering_page import clustering_page
     clustering_page()
 elif page == "ℹ️ 系统信息":
-    from pages.system_info import system_info_page
+    from app_pages.system_info import system_info_page
     system_info_page()

@@ -64,3 +64,10 @@
     border-left: 4px solid #9c27b0;
     margin: 1rem 0;
 }
+
+.stRadio input[type="radio"] {
+    display: none !important;
+}
+.stRadio label > div:first-child {
+    display: none !important;
+}

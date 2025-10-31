@@ -48,8 +48,8 @@ def _create_or_get_collection(collection_name, dim):
             # 创建新集合
             fields = [
                 FieldSchema(name="id", dtype=DataType.INT64, is_primary=True, auto_id=True),
-                FieldSchema(name="vector", dtype=DataType.FLOAT_VECTOR, dim=dim),
                 FieldSchema(name="text", dtype=DataType.VARCHAR, max_length=65535),
+                FieldSchema(name="vector", dtype=DataType.FLOAT_VECTOR, dim=dim),
                 FieldSchema(name="metadata", dtype=DataType.VARCHAR, max_length=65535)
             ]
             schema = CollectionSchema(fields, "文本向量集合")
@@ -183,47 +183,59 @@ def get_mongo_collection():
 def insert_batch(texts, vectors, metadata_list, collection, mongo_col, batch_size=500):
     """
     批量插入 texts, vectors, metadata 到 Milvus + MongoDB
+    自动处理向量shape与类型，适配所有标准Milvus schema。
     """
     assert len(texts) == vectors.shape[0] == len(metadata_list), (
         f"数量不一致: texts={len(texts)}, vectors={vectors.shape[0]}, metadata={len(metadata_list)}"
     )
-
     N = len(texts)
     all_milvus_ids = []
-
     st.info(f"🚀 开始批量插入 {N:,} 条数据到 Milvus 和 MongoDB")
     progress_bar = st.progress(0)
     status_text = st.empty()
-
+    
     try:
         for start in range(0, N, batch_size):
             end = min(start + batch_size, N)
             batch_texts = texts[start:end]
-            batch_vectors = vectors[start:end].astype(np.float32)
+            batch_vectors = np.asarray(vectors[start:end])
             batch_metadata = metadata_list[start:end]
-
-            # 🔧 修复数据格式：Milvus 要求 list 格式，顺序与 schema 对齐
+            
+            # 保险：保证向量shape为二维(batch, dim)
+            if batch_vectors.ndim != 2:
+                st.error(f"❌ 向量shape不合法，必须二维(batch, dim)，实际: {batch_vectors.shape}")
+                raise ValueError(f"向量shape不合法: {batch_vectors.shape}")
+            
+            # 转为浮点类型列表
+            vectors_clean = batch_vectors.astype(np.float32).tolist()
+            
+            # 🔧 关键修复：构建每条记录的字典列表
             milvus_data = [
-                batch_vectors.tolist(),  # vector
-                batch_texts,             # text
-                [json.dumps(meta, ensure_ascii=False) for meta in batch_metadata]  # metadata
+                {
+                    "vector": vec,
+                    "text": text,
+                    "metadata": json.dumps(meta, ensure_ascii=False)
+                }
+                for vec, text, meta in zip(vectors_clean, batch_texts, batch_metadata)
             ]
-
-            status_text.text(f"📥 插入批次 {start//batch_size + 1}/{(N-1)//batch_size + 1} 到 Milvus...")
-
+            
+            status_text.text(f"📝 插入批次 {start//batch_size + 1}/{(N-1)//batch_size + 1} 到 Milvus...")
+            
             try:
                 res = collection.insert(milvus_data)
-                batch_ids = res.primary_keys
+                batch_ids = res.primary_keys if hasattr(res, "primary_keys") else res
                 all_milvus_ids.extend(batch_ids)
                 collection.flush()
             except Exception as e:
                 st.error(f"❌ Milvus插入失败: {e}")
                 st.error(f"vector shape={batch_vectors.shape}, text count={len(batch_texts)}, metadata count={len(batch_metadata)}")
+                print("❌ DEBUG - milvus_data[0]:", milvus_data[0] if milvus_data else None)
+                print("❌ DEBUG - vector[0] type:", type(milvus_data[0]['vector']) if milvus_data else None)
+                print("❌ DEBUG - vector[0][0] type:", type(milvus_data[0]['vector'][0]) if milvus_data and milvus_data[0]['vector'] else None)
                 raise
-
+            
             # 插入 MongoDB
             status_text.text(f"💾 插入批次 {start//batch_size + 1}/{(N-1)//batch_size + 1} 到 MongoDB...")
-
             try:
                 docs = [
                     {
@@ -238,17 +250,16 @@ def insert_batch(texts, vectors, metadata_list, collection, mongo_col, batch_siz
                 st.error(f"❌ MongoDB插入失败: {e}")
                 st.warning("⚠️ 建议检查 MongoDB 连接或重复主键")
                 raise
-
+            
             progress = end / N
             progress_bar.progress(progress)
             status_text.text(f"✅ 已完成 {end:,}/{N:,} 条记录 ({progress*100:.1f}%)")
-
+        
         _ensure_collection_loaded(collection)
         progress_bar.progress(1.0)
         status_text.text(f"🎉 批量插入完成，共 {len(all_milvus_ids):,} 条记录")
-
         return all_milvus_ids
-
+        
     except Exception as e:
         st.error(f"❌ 批量插入过程中出错: {e}")
         raise
@@ -256,8 +267,90 @@ def insert_batch(texts, vectors, metadata_list, collection, mongo_col, batch_siz
         progress_bar.empty()
         status_text.empty()
 
-# ----- 用于 Streamlit 集成的主入口 -----
+# def insert_batch(texts, vectors, metadata_list, collection, mongo_col, batch_size=500):
+#     """
+#     批量插入 texts, vectors, metadata 到 Milvus + MongoDB
+#     """
+#     assert len(texts) == vectors.shape[0] == len(metadata_list), (
+#         f"数量不一致: texts={len(texts)}, vectors={vectors.shape[0]}, metadata={len(metadata_list)}"
+#     )
 
+#     N = len(texts)
+#     all_milvus_ids = []
+
+#     st.info(f"🚀 开始批量插入 {N:,} 条数据到 Milvus 和 MongoDB")
+#     progress_bar = st.progress(0)
+#     status_text = st.empty()
+
+#     try:
+#         for start in range(0, N, batch_size):
+#             end = min(start + batch_size, N)
+#             batch_texts = texts[start:end]
+#             batch_vectors = vectors[start:end].astype(np.float32)
+#             batch_metadata = metadata_list[start:end]
+
+#             # np.ndarray保证shape=(N, dim)
+#             vectors_list = batch_vectors.astype(np.float32).tolist()
+#             vectors_clean = [
+#                 [float(x) for x in vec] if isinstance(vec, (list, np.ndarray)) else []
+#                 for vec in vectors_list
+#             ]
+
+#             # 🔧 修复数据格式：Milvus 要求 list 格式，顺序与 schema 对齐
+#             milvus_data = {
+#                 "vector": vectors_clean,  # list of vectors
+#                 "text": batch_texts,               # list of string
+#                 "metadata": [json.dumps(meta, ensure_ascii=False) for meta in batch_metadata]  # list of JSON string
+#             }
+
+#             status_text.text(f"📥 插入批次 {start//batch_size + 1}/{(N-1)//batch_size + 1} 到 Milvus...")
+
+#             try:
+#                 res = collection.insert(milvus_data)
+#                 batch_ids = res.primary_keys
+#                 all_milvus_ids.extend(batch_ids)
+#                 collection.flush()
+#             except Exception as e:
+#                 st.error(f"❌ Milvus插入失败: {e}")
+#                 st.error(f"vector shape={batch_vectors.shape}, text count={len(batch_texts)}, metadata count={len(batch_metadata)}")
+#                 raise
+
+#             # 插入 MongoDB
+#             status_text.text(f"💾 插入批次 {start//batch_size + 1}/{(N-1)//batch_size + 1} 到 MongoDB...")
+
+#             try:
+#                 docs = [
+#                     {
+#                         "_id": int(milvus_id),
+#                         "text": text,
+#                         "metadata": meta
+#                     }
+#                     for milvus_id, text, meta in zip(batch_ids, batch_texts, batch_metadata)
+#                 ]
+#                 mongo_col.insert_many(docs)
+#             except Exception as e:
+#                 st.error(f"❌ MongoDB插入失败: {e}")
+#                 st.warning("⚠️ 建议检查 MongoDB 连接或重复主键")
+#                 raise
+
+#             progress = end / N
+#             progress_bar.progress(progress)
+#             status_text.text(f"✅ 已完成 {end:,}/{N:,} 条记录 ({progress*100:.1f}%)")
+
+#         _ensure_collection_loaded(collection)
+#         progress_bar.progress(1.0)
+#         status_text.text(f"🎉 批量插入完成，共 {len(all_milvus_ids):,} 条记录")
+
+#         return all_milvus_ids
+
+#     except Exception as e:
+#         st.error(f"❌ 批量插入过程中出错: {e}")
+#         raise
+#     finally:
+#         progress_bar.empty()
+#         status_text.empty()
+
+# ----- 用于 Streamlit 集成的主入口 -----
 def milvus_mongo_upload(texts, vectors, metadata_list, milvus_dim=384, collection_name="text_vectors"):
     """
     集成上传入口，Streamlit 内直接调用
@@ -268,47 +361,55 @@ def milvus_mongo_upload(texts, vectors, metadata_list, milvus_dim=384, collectio
     collection_name: str - 集合名称
     """
     try:
-        # 验证输入数据
+        # ===== 强力清洗文本字段 =====
+        texts_flat = []
+        for t in texts:
+            # 多层嵌套list彻底剥平
+            if isinstance(t, list):
+                for sub_t in t:
+                    if isinstance(sub_t, str):
+                        texts_flat.append(sub_t)
+            elif isinstance(t, str):
+                texts_flat.append(t)
+        texts = texts_flat
+
+        # 其它输入验证不变
         if not texts or len(texts) == 0:
             raise ValueError("文本列表不能为空")
-        
         if vectors is None or vectors.size == 0:
             raise ValueError("向量数组不能为空")
-        
         if not metadata_list or len(metadata_list) == 0:
             raise ValueError("元数据列表不能为空")
-        
         if len(texts) != vectors.shape[0] or len(texts) != len(metadata_list):
             raise ValueError(f"数据长度不一致: texts={len(texts)}, vectors={vectors.shape[0]}, metadata={len(metadata_list)}")
-        
-        # 验证向量维度
         if vectors.shape[1] != milvus_dim:
             raise ValueError(f"向量维度不匹配: 期望 {milvus_dim}, 实际 {vectors.shape[1]}")
-        
-        # 验证向量数据类型
         if not isinstance(vectors, np.ndarray):
             vectors = np.array(vectors, dtype=np.float32)
         else:
             vectors = vectors.astype(np.float32)
-        
-        st.info(f"📋 准备上传数据: {len(texts):,} 条文本，向量维度: {milvus_dim}")
-        
-        # 获取集合对象
+
+        st.info(f" 准备上传数据: {len(texts):,} 条文本，向量维度: {milvus_dim}")
+
         collection = get_milvus_collection(collection_name=collection_name, dim=milvus_dim)
         mongo_col = get_mongo_collection()
-        
-        # 执行批量插入
+
+        print("DEBUG insert_batch输入类型:", type(texts), type(vectors), type(metadata_list))
+        print("DEBUG texts示例:", texts[:5])
+        print("DEBUG vectors shape:", vectors.shape)
+
+
         milvus_ids = insert_batch(texts, vectors, metadata_list, collection, mongo_col)
-        
-        st.success(f"🎉 数据上传成功！")
-        st.success(f"📊 Milvus: 插入 {len(milvus_ids):,} 条向量记录")
-        st.success(f"🍃 MongoDB: 插入 {len(milvus_ids):,} 条元数据记录")
-        
+
+        st.success(f" 数据上传成功！")
+        st.success(f" Milvus: 插入 {len(milvus_ids):,} 条向量记录")
+        st.success(f" MongoDB: 插入 {len(milvus_ids):,} 条元数据记录")
+
         return milvus_ids
-        
+
     except Exception as e:
         st.error(f"❌ 数据上传失败: {e}")
-        st.info("💡 请检查以下项目:")
+        st.info(" 请检查以下项目:")
         st.info("1. Milvus 数据库是否正常连接")
         st.info("2. MongoDB 数据库是否正常连接")  
         st.info("3. 数据格式是否正确")

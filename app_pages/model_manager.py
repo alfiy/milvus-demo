@@ -102,7 +102,7 @@ def model_manager_page():
             ok, msg = vp.load_model()
             if ok:
                 st.session_state['model_loaded'] = True
-                config_manager.update_model_config(selected_model, auto_load)
+                st.session_state['model_config'] = config_manager.update_model_config(selected_model, auto_load)
                 st.success("✅ 模型加载成功")
                 st.rerun()
             else:

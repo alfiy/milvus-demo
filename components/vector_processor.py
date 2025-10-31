@@ -128,7 +128,7 @@ class VectorProcessor:
                     continue
         return json_data
 
-    def process_json_data(self, json_data: List[Dict[str, Any]]) -> tuple[List[str], np.ndarray, List[dict]]:
+    def process_json_data(self, json_data: List[Dict[str, Any]]) -> tuple[list[str], np.ndarray, list[dict]]:
         """
         处理json数据，返回：文本列表，向量数组，元数据列表
         """
@@ -137,6 +137,7 @@ class VectorProcessor:
         for i, item in enumerate(json_data):
             if isinstance(item, dict):
                 for key, value in item.items():
+                    # 只允许value为str，不允许list、dict、bytes
                     if isinstance(value, str) and value.strip():
                         texts.append(value)
                         metadata.append({
@@ -151,10 +152,16 @@ class VectorProcessor:
                     'key': 'text',
                     'original_data': {'text': item}
                 })
-        if not texts:
+            # 推荐在这里可以扩展更复杂类型支持或错误提示
+
+        # 检查所有文本最终是纯字符串
+        texts_fixed = [str(t) for t in texts if isinstance(t, str)]
+        if not texts_fixed:
             return [], np.array([]), []
-        vectors = self.encode_texts(texts)
-        return texts, vectors, metadata
+        
+        vectors = self.encode_texts(texts_fixed)
+        return texts_fixed, vectors, metadata
+
 
     def encode_texts(
         self,
