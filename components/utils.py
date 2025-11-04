@@ -2,45 +2,45 @@ from pymongo import MongoClient
 import numpy as np
 import streamlit as st
 import logging
+from typing import List, Dict, Any
 
 
-def milvus_mongo_semantic_search(query, top_k, milvus_collection, mongo_col, vector_processor):
+def vector_search(
+    query: str,
+    top_k: int,
+    milvus_collection,
+    mongo_col,
+    vector_processor,
+    filter_mode: str = "similarity",    # "similarity" 或 "distance"
+    filter_threshold: float = 0.0,
+    output_fields: List[str] = ["text", "metadata"]
+) -> List[Dict[str, Any]]:
     """
-    使用 Milvus + MongoDB 进行语义搜索 
+    优化后的向量+Mongo 搜索功能，支持过滤/统计和异常处理
     """
     try:
-        # 1️⃣ 将查询文本向量化
+        # 向量化查询
         query_vector = vector_processor.encode([query])[0]
 
-        # 2️⃣ 检查集合是否存在且已连接
-        if not milvus_collection:
-            st.error("❌ Milvus 集合未初始化，请先创建集合或导入数据")
-            return []
-
-        # 3️⃣ 执行 Milvus 搜索
+        # Milvus 搜索
         search_params = {
             "metric_type": "COSINE",
             "params": {"nprobe": 10}
         }
-
         results = milvus_collection.search(
             data=[query_vector.tolist()],
-            anns_field="vector",           # ✅ 字段名改为 "vector"
+            anns_field="vector",
             param=search_params,
             limit=top_k,
-            output_fields=["text", "metadata"]
+            output_fields=output_fields,
         )
 
-        # 4️⃣ 整理 Milvus 搜索结果
-        ids, scores = [], []
-        for hits in results:
-            for hit in hits:
-                ids.append(hit.id)
-                scores.append(float(hit.distance))
+        # 整理搜索结果：批量Mongo查元数据
+        ids = [hit.id for hit in results[0]]
+        scores = [float(hit.distance) for hit in results[0]]
 
-        # 5️⃣ 查询 MongoDB 获取元数据
-        docs_cursor = mongo_col.find({"_id": {"$in": ids}}, {"text": 1, "metadata": 1})
-        id2doc = {str(doc["_id"]): doc for doc in docs_cursor}
+        docs = list(mongo_col.find({"_id": {"$in": ids}}, {field:1 for field in output_fields}))
+        id2doc = {str(doc["_id"]): doc for doc in docs}
 
         combined = []
         for id_, score in zip(ids, scores):
@@ -52,12 +52,18 @@ def milvus_mongo_semantic_search(query, top_k, milvus_collection, mongo_col, vec
                 "metadata": doc.get("metadata", {}),
             })
 
-        return combined
+        # 相似度/距离过滤
+        if filter_mode == "similarity":
+            filtered = [r for r in combined if r["score"] >= filter_threshold]
+        else:
+            filtered = [r for r in combined if r["score"] <= filter_threshold]
+
+        return filtered
 
     except Exception as e:
-        logging.error(f"❌ 搜索失败: {e}")
-        st.error(f"❌ 搜索失败: {e}")
+        logging.error(f"向量检索失败: {e}")
         return []
+
 
 # 自动MongoDB连接
 def auto_connect_mongodb(mongodb_config):

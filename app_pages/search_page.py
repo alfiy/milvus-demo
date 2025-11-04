@@ -1,21 +1,33 @@
 import streamlit as st
 from components.milvus_mongo_insert import get_milvus_collection, get_mongo_collection
-from components.utils import milvus_mongo_semantic_search
+from components.utils import vector_search
 import numpy as np
 
+def safe_get(key, default=None):
+    return st.session_state['components'].get(key, default) if 'components' in st.session_state else default
+
+def get_dependencies():
+    return {
+        "model_loaded": st.session_state.get('model_loaded', False),
+        "mongodb_connected": st.session_state.get('mongodb_connected', False),
+        "milvus_manager": safe_get('milvus_manager'),
+        "vector_processor": safe_get('vector_processor'),
+    }
 
 def search_page():
     """文本搜索页面 - 修复版本"""
     st.markdown("## 🔍 文本搜索")
+
+    deps = get_dependencies()
     
     # 🔧 第一步：检查模型是否已加载
-    if not st.session_state.get('model_loaded', False):
+    if not deps["model_loaded"]:
         st.warning("⚠️ 尚未加载嵌入模型！")
         st.info("🔥 请先到 '🔥 嵌入模型管理' 页面加载模型，然后再进行搜索。")
         return
     
     # 🔧 第二步：检查 MongoDB 连接状态
-    if not st.session_state.get("mongodb_connected", False):
+    if not deps["mongodb_connected"]:
         st.error("❌ MongoDB 未连接")
         st.info("📌 请先到 '🍃 MongoDB配置管理' 页面配置并连接 MongoDB")
         
@@ -26,8 +38,7 @@ def search_page():
         return
     
     # 🔧 第三步：检查 Milvus 连接状态
-    milvus_manager = st.session_state['components'].get('milvus_manager')
-    if not milvus_manager or not milvus_manager.is_connected:
+    if not deps["milvus_manager"] or not deps["milvus_manager"].is_connected:
         st.error("❌ Milvus 未连接")
         st.info("📌 请先到 '🗄️ Milvus数据库管理' 页面配置并连接 Milvus")
         return
@@ -98,14 +109,18 @@ def search_page():
     if search_button and query:
         with st.spinner("🔍 正在搜索相关内容..."):
             try:
-                results = milvus_mongo_semantic_search(
-                    query, 
-                    top_k, 
-                    milvus_collection, 
-                    mongo_col, 
-                    vector_processor
+
+                results = vector_search(
+                    query=query,
+                    top_k=top_k,
+                    milvus_collection=milvus_collection,
+                    mongo_col=mongo_col,
+                    vector_processor=vector_processor,
+                    filter_mode="similarity",
+                    filter_threshold=similarity_threshold,
+                    output_fields=["text", "metadata"]
                 )
-                
+
                 # 过滤结果
                 filtered_results = [r for r in results if r['score'] >= similarity_threshold]
                 
