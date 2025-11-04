@@ -1,6 +1,7 @@
 from pymongo import MongoClient
 import numpy as np
 import streamlit as st
+import logging
 
 
 def milvus_mongo_semantic_search(query, top_k, milvus_collection, mongo_col, vector_processor):
@@ -38,8 +39,8 @@ def milvus_mongo_semantic_search(query, top_k, milvus_collection, mongo_col, vec
                 scores.append(float(hit.distance))
 
         # 5️⃣ 查询 MongoDB 获取元数据
-        docs = list(mongo_col.find({"_id": {"$in": ids}}))
-        id2doc = {str(doc["_id"]): doc for doc in docs}
+        docs_cursor = mongo_col.find({"_id": {"$in": ids}}, {"text": 1, "metadata": 1})
+        id2doc = {str(doc["_id"]): doc for doc in docs_cursor}
 
         combined = []
         for id_, score in zip(ids, scores):
@@ -54,6 +55,7 @@ def milvus_mongo_semantic_search(query, top_k, milvus_collection, mongo_col, vec
         return combined
 
     except Exception as e:
+        logging.error(f"❌ 搜索失败: {e}")
         st.error(f"❌ 搜索失败: {e}")
         return []
 

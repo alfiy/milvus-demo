@@ -2,9 +2,9 @@ import streamlit as st
 from components.vector_processor import VectorProcessor
 from components.milvus_manager import MilvusManager
 from components.clustering_analyzer import ClusteringAnalyzer
-from components.search_engine import SearchEngine
 from components.config_manager import config_manager
 from components.utils import auto_connect_mongodb
+
 
 # ===== 1. 全局样式加载 =====
 def local_css(file_name):
@@ -44,8 +44,6 @@ if "milvus_manager" not in st.session_state["components"]:
     )
 if "vector_processor" not in st.session_state["components"]:
     st.session_state["components"]["vector_processor"] = VectorProcessor()
-if "search_engine" not in st.session_state["components"]:
-    st.session_state["components"]["search_engine"] = SearchEngine()
 if "clustering_analyzer" not in st.session_state["components"]:
     st.session_state["components"]["clustering_analyzer"] = ClusteringAnalyzer()
 if "model_config" not in st.session_state or not isinstance(st.session_state["model_config"], dict):

@@ -1,17 +1,22 @@
 import numpy as np
 import pandas as pd
 from sklearn.cluster import KMeans, DBSCAN
-from sklearn.metrics import silhouette_score
 import plotly.express as px
 import plotly.graph_objects as go
 from umap import UMAP
 import streamlit as st
 from typing import List, Dict, Any, Tuple
 import warnings
+import hdbscan
+from itertools import product
+from sklearn.metrics import davies_bouldin_score, silhouette_score, davies_bouldin_score
 
-# 抑制 UMAP 和 Numba 警告
+
+
+# 抑制警告
 warnings.filterwarnings('ignore', message='.*n_jobs.*overridden.*')
 warnings.filterwarnings('ignore', message='.*TBB threading layer.*')
+warnings.filterwarnings('ignore', category=FutureWarning, module='sklearn')
 
 class ClusteringAnalyzer:
     def __init__(self):
@@ -260,13 +265,226 @@ class ClusteringAnalyzer:
         
         return best_params
     
+    # hdbscan聚类算法
+    def perform_hdbscan_clustering(
+        self, 
+        min_cluster_size: int = 5, 
+        min_samples: int = None,
+        cluster_selection_epsilon: float = 0.0
+    ) -> np.ndarray:
+        """
+        执行 HDBSCAN 聚类
+        Args:
+            min_cluster_size: 每个聚类的最小样本数（推荐 5-15）
+            min_samples: 控制噪声敏感度（默认等于 min_cluster_size）
+            cluster_selection_epsilon: 控制聚类边界的宽松程度（默认 0）
+        """
+        
+
+        if self.vectors is None:
+            st.error("❌ 请先加载数据")
+            return np.array([])
+
+        try:
+            # 选择聚类输入向量
+            if self.reduced_vectors is not None:
+                vectors_to_cluster = self.reduced_vectors
+                st.info(" 使用降维后的向量进行 HDBSCAN 聚类")
+            else:
+                st.warning("⚠️ 未进行降维，正在使用原始向量进行 HDBSCAN 聚类（建议先 UMAP 降维）")
+                vectors_to_cluster = self.vectors
+
+            # 自动选择度量方式
+            if vectors_to_cluster.shape[1] > 50:
+                metric = 'cosine'
+                st.info(" 高维数据使用余弦距离 (cosine)")
+            else:
+                metric = 'euclidean'
+                st.info(" 低维数据使用欧氏距离 (euclidean)")
+
+            # 创建并拟合 HDBSCAN 模型
+            clusterer = hdbscan.HDBSCAN(
+                min_cluster_size=min_cluster_size,
+                min_samples=min_samples,
+                metric=metric,
+                cluster_selection_epsilon=cluster_selection_epsilon,
+                cluster_selection_method='eom'
+            )
+
+            self.cluster_labels = clusterer.fit_predict(vectors_to_cluster)
+            unique_labels = set(self.cluster_labels)
+            n_clusters = len(unique_labels) - (1 if -1 in unique_labels else 0)
+            n_noise = list(self.cluster_labels).count(-1)
+
+            st.info("**✅ HDBSCAN 聚类完成**")
+            col1, col2, col3 = st.columns(3)
+            with col1:
+                st.metric("聚类数量", n_clusters)
+            with col2:
+                st.metric("噪声点", f"{n_noise} ({n_noise/len(self.cluster_labels)*100:.1f}%)")
+            with col3:
+                st.metric("有效点", len(self.cluster_labels) - n_noise)
+
+            # 各聚类大小
+            cluster_sizes = {
+                f"簇 {label}": int((self.cluster_labels == label).sum())
+                for label in unique_labels if label != -1
+            }
+            if cluster_sizes:
+                st.write("**各聚类大小:**", cluster_sizes)
+
+            # 尝试计算轮廓系数（需多个聚类且噪声点 < 90%）
+            silhouette_avg = None
+            if n_clusters > 1 and n_noise / len(self.cluster_labels) < 0.9:
+                from sklearn.metrics import silhouette_score
+                silhouette_avg = silhouette_score(vectors_to_cluster, self.cluster_labels)
+                st.success(f"平均轮廓系数: {silhouette_avg:.3f}")
+
+            # 参数建议
+            if n_clusters == 0:
+                st.warning("⚠️ 未发现任何聚类。建议：")
+                st.markdown(f"""
+                - 减小 `min_cluster_size`（当前 {min_cluster_size} → 建议 {max(2, min_cluster_size // 2)}）
+                - 或增加降维维度
+                """)
+            elif n_clusters == 1:
+                st.warning("⚠️ 只发现 1 个聚类。建议：")
+                st.markdown(f"""
+                - 增大 `min_cluster_size` 或 `min_samples`
+                - 调整 `cluster_selection_epsilon` (当前 {cluster_selection_epsilon} → 建议 {cluster_selection_epsilon + 0.05})
+                """)
+            elif n_noise / len(self.cluster_labels) > 0.5:
+                st.warning(f"⚠️ 噪声点过多 ({n_noise/len(self.cluster_labels)*100:.1f}%)。建议：")
+                st.markdown(f"""
+                - 减小 `min_samples`（当前 {min_samples or min_cluster_size} → 建议 {max(2, (min_samples or min_cluster_size)//2)}）
+                - 增加 `cluster_selection_epsilon`
+                """)
+
+            else:
+                st.success("✅ 聚类结果良好！")
+
+            return self.cluster_labels
+
+        except Exception as e:
+            st.error(f"❌ HDBSCAN 聚类失败: {e}")
+            import traceback
+            st.code(traceback.format_exc())
+            return np.array([])
+
+    # 自动优化hdbscan参数 
+    def find_optimal_hdbscan_params(
+        self,
+        min_cluster_size_range: Tuple[int, int, int] = (5, 50, 5),
+        min_samples_range: Tuple[int, int, int] = (1, 10, 2),
+        metrics: Tuple[str, ...] = ("euclidean", "manhattan"),
+        cluster_selection_methods: Tuple[str, ...] = ("eom", "leaf"),
+        scoring: str = "silhouette",
+    ):
+        """
+        自动搜索最佳 HDBSCAN 聚类参数（带 Streamlit 实时进度与表格展示）
+        """
+
+        if self.vectors is None:
+            st.error("❌ 请先加载或生成嵌入向量！")
+            return None, None, None, None
+
+        st.subheader("🔍 HDBSCAN 参数搜索中...")
+        progress_bar = st.progress(0)
+        status_text = st.empty()
+        result_table = st.empty()
+
+        embeddings = self.reduced_vectors if self.reduced_vectors is not None else self.vectors
+
+        min_cluster_sizes = range(*min_cluster_size_range)
+        min_samples = range(*min_samples_range)
+        total = len(list(product(min_cluster_sizes, min_samples, metrics, cluster_selection_methods)))
+        current = 0
+
+        all_results = []
+        best_score = -np.inf if scoring == "silhouette" else np.inf
+        best_model, best_params = None, None
+
+        for mcs, ms, metric, method in product(min_cluster_sizes, min_samples, metrics, cluster_selection_methods):
+            current += 1
+            progress = current / total
+            status_text.text(f"正在搜索: min_cluster_size={mcs}, min_samples={ms}, metric={metric}, method={method} ({current}/{total})")
+            progress_bar.progress(progress)
+
+            try:
+                model = hdbscan.HDBSCAN(
+                    min_cluster_size=mcs,
+                    min_samples=ms,
+                    metric=metric,
+                    cluster_selection_method=method,
+                    prediction_data=True,
+                    gen_min_span_tree=False
+                ).fit(embeddings)
+
+                labels = model.labels_
+                n_clusters = len(set(labels)) - (1 if -1 in labels else 0)
+
+                # 跳过全噪声或仅一个簇的情况
+                if n_clusters < 2:
+                    continue
+
+                if scoring == "silhouette":
+                    score = silhouette_score(embeddings, labels)
+                    better = score > best_score
+                else:
+                    score = davies_bouldin_score(embeddings, labels)
+                    better = score < best_score
+
+                result = {
+                    "min_cluster_size": mcs,
+                    "min_samples": ms,
+                    "metric": metric,
+                    "method": method,
+                    "n_clusters": n_clusters,
+                    "score": round(score, 4),
+                }
+                all_results.append(result)
+
+                if better:
+                    best_score = score
+                    best_model = model
+                    best_params = {
+                        "min_cluster_size": mcs,
+                        "min_samples": ms,
+                        "metric": metric,
+                        "cluster_selection_method": method,
+                        "n_clusters": n_clusters,
+                    }
+
+                    st.success(f"✨ 新最优组合: {best_params} | score={score:.4f}")
+
+                # 每次更新表格
+                df = pd.DataFrame(all_results).sort_values(
+                    "score", ascending=(scoring != "silhouette"), ignore_index=True
+                )
+                result_table.dataframe(df)
+
+            except Exception as e:
+                st.warning(f"⚠️ 参数组合失败: min_cluster_size={mcs}, min_samples={ms}, metric={metric} ({e})")
+                continue
+
+        progress_bar.progress(1.0)
+        status_text.text("✅ 搜索完成！")
+
+        if not all_results:
+            st.error("❌ 未找到合适的聚类结果，请调整搜索范围或参数。")
+            return None, None, None, None
+
+        st.success(f"🏁 最佳参数: {best_params}")
+        st.metric("最佳分数", f"{best_score:.4f}")
+        st.metric("最佳聚类数", best_params['n_clusters'])
+
+        return best_model, best_params, best_score, all_results
+
+
     def reduce_dimensions(self, n_components: int = 2, random_state: int = 42) -> np.ndarray:
         """
         使用UMAP进行降维
         
-        🔧 修复说明：
-        1. 移除了 n_jobs 参数（与 random_state 冲突）
-        2. 添加了 low_memory 参数以避免 TBB 警告
         """
         if self.vectors is None:
             st.error("❌ 请先加载数据")
@@ -275,7 +493,6 @@ class ClusteringAnalyzer:
         try:
             st.info(f" 正在进行UMAP降维...")
             
-            # 🔧 修复：移除 n_jobs，保留 random_state 以确保结果可重复
             # low_memory=True 可以避免某些 TBB 相关警告
             umap_reducer = UMAP(
                 n_components=n_components, 
@@ -284,7 +501,6 @@ class ClusteringAnalyzer:
                 n_neighbors=15, 
                 min_dist=0.1,
                 low_memory=True  # 减少内存使用，避免 TBB 警告
-                # 注意：不设置 n_jobs 参数
             )
             
             self.reduced_vectors = umap_reducer.fit_transform(self.vectors)
@@ -405,32 +621,69 @@ class ClusteringAnalyzer:
             return [], []
         
         try:
-            k_range = range(2, min(max_k + 1, len(self.vectors)))
-            inertias = []
-            silhouette_scores = []
-            
-            st.info(f" 正在寻找最优K值 (测试范围: 2-{max(k_range)})...")
+            st.subheader("🔍 K-means 最优K值搜索中...")
             progress_bar = st.progress(0)
             status_text = st.empty()
+            result_table = st.empty()
             
-            for i, k in enumerate(k_range):
-                status_text.text(f"测试 K={k}...")
-                kmeans = KMeans(n_clusters=k, random_state=42, n_init=10)
-                labels = kmeans.fit_predict(self.vectors)
+            k_range = range(2, min(max_k + 1, len(self.vectors)))
+            total = len(k_range)
+            current = 0
+            
+            all_results = []
+            best_score = -np.inf
+            best_k = None
+            
+            for k in k_range:
+                current += 1
+                progress = current / total
+                status_text.text(f"正在搜索: K={k} ({current}/{total})")
+                progress_bar.progress(progress)
                 
-                inertias.append(kmeans.inertia_)
-                silhouette_scores.append(silhouette_score(self.vectors, labels))
-                
-                progress_bar.progress((i + 1) / len(k_range))
+                try:
+                    kmeans = KMeans(n_clusters=k, random_state=42, n_init=10)
+                    labels = kmeans.fit_predict(self.vectors)
+                    
+                    inertia = kmeans.inertia_
+                    silhouette = silhouette_score(self.vectors, labels)
+                    
+                    result = {
+                        "K": k,
+                        "inertia": round(inertia, 2),
+                        "silhouette_score": round(silhouette, 4),
+                    }
+                    all_results.append(result)
+                    
+                    if silhouette > best_score:
+                        best_score = silhouette
+                        best_k = k
+                        st.success(f"✨ 新最优K值: K={k} | silhouette={silhouette:.4f}")
+                    
+                    # 每次更新表格
+                    df = pd.DataFrame(all_results).sort_values(
+                        "silhouette_score", ascending=False, ignore_index=True
+                    )
+                    result_table.dataframe(df)
+                    
+                except Exception as e:
+                    st.warning(f"⚠️ K={k} 测试失败: ({e})")
+                    continue
             
-            progress_bar.empty()
-            status_text.empty()
+            progress_bar.progress(1.0)
+            status_text.text("✅ 搜索完成!")
             
-            # 找到最优K（轮廓系数最高）
-            optimal_k = list(k_range)[np.argmax(silhouette_scores)]
-            st.success(f"✅ 推荐K值: {optimal_k} (轮廓系数: {max(silhouette_scores):.3f})")
+            if not all_results:
+                st.error("❌ 未找到合适的K值,请检查数据。")
+                return [], []
             
-            return list(k_range), silhouette_scores
+            st.success(f"🎯 最佳K值: {best_k}")
+            st.metric("最佳轮廓系数", f"{best_score:.4f}")
+            
+            # 提取数据用于返回
+            k_values = [r["K"] for r in all_results]
+            silhouette_scores = [r["silhouette_score"] for r in all_results]
+            
+            return k_values, silhouette_scores        
             
         except Exception as e:
             st.error(f"❌ 寻找最优K值失败: {e}")

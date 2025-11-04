@@ -1,7 +1,7 @@
 import streamlit as st
 import plotly.express as px
 import plotly.graph_objects as go
-import numpy as np  # 🔧 添加这一行
+import numpy as np
 
 def clustering_page():
     st.markdown("## 🔍 聚类分析")
@@ -25,16 +25,16 @@ def clustering_page():
     
     clustering_method = st.selectbox(
         "选择聚类算法",
-        ["K-means聚类", "DBSCAN聚类"],
-        help="K-means适用于球形聚类，DBSCAN适用于任意形状的聚类"
+        ["K-means聚类", "DBSCAN聚类","HDBSCAN聚类"],
+        help="K-means适用于球形聚类，DBSCAN/HDBSCAN适用于任意形状的聚类"
     )
     
-    # 聚类参数设置
+    # k-means 聚类参数设置
     if clustering_method == "K-means聚类":
-        col1, col2 = st.columns(2)
+        col1, = st.columns(1)
         with col1:
             n_clusters = st.slider("聚类数量 (K)", 2, 20, 8, help="设置要分成多少个聚类")
-        with col2:
+        
             if st.button("🔍 寻找最优K值", help="使用轮廓系数寻找最佳聚类数"):
                 with st.spinner("正在分析最优K值..."):
                     # 先加载数据
@@ -70,8 +70,9 @@ def clustering_page():
                     except Exception as e:
                         st.error(f"❌ 寻找最优K值失败: {e}")
                         st.exception(e)
+        
     
-    else:  # DBSCAN
+    elif clustering_method == "DBSCAN聚类":  # DBSCAN
         st.markdown("#### DBSCAN 参数设置")
         
         # 添加降维选项
@@ -84,33 +85,70 @@ def clustering_page():
         if use_dimension_reduction:
             n_components = st.slider("降维目标维度", 2, 10, 3, help="推荐2-3维")
         
-        col1, col2, col3 = st.columns(3)
+        col1, col2 = st.columns(2)
         with col1:
             eps = st.slider("邻域半径 (eps)", 0.01, 2.0, 0.3, 0.01, help="定义邻域的半径大小，值越小越严格")
         with col2:
             min_samples = st.slider("最小样本数", 2, 20, 5, help="形成聚类所需的最小样本数")
-        with col3:
-            if st.button("🔍 自动搜索参数", help="自动寻找最优的eps和min_samples"):
-                with st.spinner("正在搜索最优参数..."):
-                    try:
-                        vectors, texts, metadata = milvus_manager.get_all_vectors_and_metadata()
-                        if vectors is None or len(vectors) == 0:
-                            st.error("❌ 未查询到数据，请先上传数据。")
-                        else:
-                            clustering_analyzer = st.session_state.components['clustering_analyzer']
-                            clustering_analyzer.load_data(vectors, texts, metadata)
-                            
-                            # 如果需要降维
-                            if use_dimension_reduction:
-                                clustering_analyzer.reduce_dimensions(n_components=n_components)
-                            
-                            best_params = clustering_analyzer.find_optimal_dbscan_params()
-                            if best_params:
-                                st.session_state['suggested_eps'] = best_params.get('eps', eps)
-                                st.session_state['suggested_min_samples'] = best_params.get('min_samples', min_samples)
-                    except Exception as e:
-                        st.error(f"❌ 参数搜索失败: {e}")
-    
+            
+
+        if st.button("🔍 自动搜索参数", help="自动寻找最优的eps和min_samples"):
+            with st.spinner("正在搜索最优参数..."):
+                try:
+                    vectors, texts, metadata = milvus_manager.get_all_vectors_and_metadata()
+                    if vectors is None or len(vectors) == 0:
+                        st.error("❌ 未查询到数据，请先上传数据。")
+                    else:
+                        clustering_analyzer = st.session_state.components['clustering_analyzer']
+                        clustering_analyzer.load_data(vectors, texts, metadata)
+                        
+                        # 如果需要降维
+                        if use_dimension_reduction:
+                            clustering_analyzer.reduce_dimensions(n_components=n_components)
+                        
+                        best_params = clustering_analyzer.find_optimal_dbscan_params()
+                        if best_params:
+                            st.session_state['suggested_eps'] = best_params.get('eps', eps)
+                            st.session_state['suggested_min_samples'] = best_params.get('min_samples', min_samples)
+                            st.success(
+                                f"✅ 最佳参数: eps={best_params.get('eps', eps)}, min_samples={best_params.get('min_samples', min_samples)}"
+                            )
+                except Exception as e:
+                    st.error(f"❌ 参数搜索失败: {e}")
+                        
+    else:  # HDBSCAN 聚类
+        st.markdown("#### HDBSCAN 参数设置")
+        use_dimension_reduction = st.checkbox("📉 先进行降维（推荐）", value=True)
+        if use_dimension_reduction:
+            n_components = st.slider("降维目标维度", 2, 10, 3)
+
+        col1, col2, = st.columns(2)
+        with col1:
+            min_cluster_size = st.slider("最小簇大小 (min_cluster_size)", 2, 50, 10)
+        with col2:
+            min_samples = st.slider("最小样本数 (min_samples)", 1, 20, 5)
+
+        scoring = st.selectbox("评估指标", ["silhouette", "db"], help="silhouette 越高越好，db 越低越好")
+
+        if st.button("🔍 自动搜索最优参数"):
+            with st.spinner("正在自动搜索最佳参数..."):
+                try:
+                    vectors, texts, metadata = milvus_manager.get_all_vectors_and_metadata()
+                    clustering_analyzer = st.session_state.components['clustering_analyzer']
+                    clustering_analyzer.load_data(vectors, texts, metadata)
+                    if use_dimension_reduction:
+                        clustering_analyzer.reduce_dimensions(n_components=n_components)
+
+                    best_model, best_params, best_score, all_results = clustering_analyzer.find_optimal_hdbscan_params(
+                        scoring=scoring
+                    )
+                    if best_params:
+                        st.success(f"✅ 最佳参数: {best_params}")
+                        st.session_state['hdbscan_best_params'] = best_params
+                except Exception as e:
+                    st.error(f"❌ HDBSCAN 参数搜索失败: {e}")
+                    st.exception(e)
+
     # 执行聚类
     st.markdown("### 🚀 开始聚类")
 
@@ -137,12 +175,25 @@ def clustering_page():
                 # Step 4. 执行聚类
                 if clustering_method == "K-means聚类":
                     labels = clustering_analyzer.perform_kmeans_clustering(n_clusters)
-                else:
+                elif clustering_method == "DBSCAN聚类":
                     # DBSCAN: 先降维（如果需要）
                     if use_dimension_reduction:
                         clustering_analyzer.reduce_dimensions(n_components=n_components)
-                    labels = clustering_analyzer.perform_dbscan_clustering(eps, min_samples)
-                
+                    labels = clustering_analyzer.perform_dbscan_clustering(
+                        eps=st.session_state.get("suggested_eps", eps),
+                        min_samples=st.session_state.get("suggested_min_samples", min_samples)
+                    )
+                else:  # HDBSCAN聚类
+                    # HDBSCAN: 先降维(如果需要)
+                    if use_dimension_reduction:
+                        clustering_analyzer.reduce_dimensions(n_components=n_components)
+                    # 使用建议参数或默认参数
+                    params = st.session_state.get("hdbscan_best_params", {})
+                    labels = clustering_analyzer.perform_hdbscan_clustering(
+                        min_cluster_size=params.get("min_cluster_size", min_cluster_size),
+                        min_samples=params.get("min_samples", min_samples)
+                    )
+
                 if len(labels) > 0:
                     # 可视化
                     st.markdown("### 📊 聚类可视化")
