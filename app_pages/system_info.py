@@ -74,9 +74,10 @@ def system_info_page():
     # 数据状态（完全基于MongoDB）
     st.markdown("### 📊 数据状态")
     col1, col2, col3, col4 = st.columns(4)
-    status = "✅ 已加载" if mongo_stats["connected"] and mongo_stats["count"] > 0 else "❌ 未加载"
+    
     with col1:
-        st.metric("MongoDB数据状态", status)
+        st.metric("MongoDB数据状态", "✅ 已连接" if mongo_stats["connected"] else "❌ 未连接")
+        st.metric("数据条数", f"{mongo_stats['count']:,}")
     with col2:
         st.metric("文本数量", f"{mongo_stats['count']:,}" if mongo_stats["connected"] else "0")
     with col3:
