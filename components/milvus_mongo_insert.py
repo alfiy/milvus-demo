@@ -389,7 +389,7 @@ def milvus_mongo_upload(texts, vectors, metadata_list, milvus_dim=384, collectio
         else:
             vectors = vectors.astype(np.float32)
 
-        st.info(f" 准备上传数据: {len(texts):,} 条文本，向量维度: {milvus_dim}")
+        st.info(f"📊 准备上传数据: {len(texts):,} 条文本，向量维度: {milvus_dim}")
 
         collection = get_milvus_collection(collection_name=collection_name, dim=milvus_dim)
         mongo_col = get_mongo_collection()

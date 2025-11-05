@@ -2,6 +2,7 @@ import streamlit as st
 from components.milvus_mongo_insert import milvus_mongo_upload
 import pandas as pd
 
+
 def data_upload_page():
     st.markdown("## 📊 数据上传与处理")
 
@@ -54,7 +55,7 @@ def data_upload_page():
         uploaded_file = st.file_uploader(
             "选择JSON文件",
             type=['json', 'jsonl', 'txt'],
-            help="支持JSON、JSONL格式文件。JSON格式：[{\"text1\":\"内容\"}]，JSONL格式：每行一个JSON对象"
+            help="支持JSON、JSONL格式文件。JSON格式：[{\"text\":\"内容\"}]，JSONL格式：每行一个JSON对象"
         )
         if uploaded_file is not None:
             try:
@@ -76,19 +77,19 @@ def data_upload_page():
                 st.error(f"❌ 文件加载失败: {e}")
                 st.markdown("""
                 **支持的文件格式：**
-                1. **标准JSON数组**: `[{"text1":"内容1"}, {"text1":"内容2"}]`
+                1. **标准JSON数组**: `[{"text":"内容1"}, {"text":"内容2"}]`
                 2. **JSONL格式**: 每行一个JSON对象
                    ```
-                   {"text1":"内容1"}
-                   {"text1":"内容2"}
+                   {"text":"内容1"}
+                   {"text":"内容2"}
                    ```
-                3. **单个JSON对象**: `{"text1":"内容"}`
+                3. **单个JSON对象**: `{"text":"内容"}`
                 """)
     elif upload_method == "✏️ 手动输入JSON数据":
         json_text = st.text_area(
             "输入JSON数据",
             height=200,
-            placeholder='[{"text1":"半生长以客为家，罢直初来瀚海槎。始信人间行不尽，天涯更复有天涯。"}]',
+            placeholder='[{"text":"半生长以客为家，罢直初来瀚海槎。始信人间行不尽，天涯更复有天涯。"}]',
             help="请输入有效的JSON格式数据"
         )
         if json_text.strip():
@@ -101,14 +102,14 @@ def data_upload_page():
                 st.error(f"❌ JSON解析失败: {e}")
     elif upload_method == "🎯 使用示例数据":
         sample_data = [
-            {"text1": "半生长以客为家，罢直初来瀚海槎。始信人间行不尽，天涯更复有天涯。"},
-            {"text1": "春风得意马蹄疾，一日看尽长安花。"},
-            {"text1": "山重水复疑无路，柳暗花明又一村。"},
-            {"text1": "海内存知己，天涯若比邻。"},
-            {"text1": "落红不是无情物，化作春泥更护花。"},
-            {"text1": "会当凌绝顶，一览众山小。"},
-            {"text1": "采菊东篱下，悠然见南山。"},
-            {"text1": "明月几时有，把酒问青天。"}
+            {"text": "半生长以客为家，罢直初来瀚海槎。始信人间行不尽，天涯更复有天涯。"},
+            {"text": "春风得意马蹄疾，一日看尽长安花。"},
+            {"text": "山重水复疑无路，柳暗花明又一村。"},
+            {"text": "海内存知己，天涯若比邻。"},
+            {"text": "落红不是无情物，化作春泥更护花。"},
+            {"text": "会当凌绝顶，一览众山小。"},
+            {"text": "采菊东篱下，悠然见南山。"},
+            {"text": "明月几时有，把酒问青天。"}
         ]
         json_data = sample_data
         st.info(f"🎯 使用示例数据，共 {len(json_data)} 条古诗词")

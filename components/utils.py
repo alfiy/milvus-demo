@@ -71,7 +71,7 @@ def auto_connect_mongodb(mongodb_config):
     初始化 MongoDB 连接，返回三元组：(连接成功, 错误消息, client对象)
     外部调用无需直接写入 session_state，由主入口统一赋值可以防止覆盖。
     """
-    from pymongo import MongoClient
+    
 
     if not mongodb_config or not mongodb_config.get("host"):
         return False, "缺少 MongoDB 配置", None

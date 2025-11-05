@@ -4,7 +4,7 @@ from components.milvus_manager import MilvusManager
 from components.clustering_analyzer import ClusteringAnalyzer
 from components.config_manager import config_manager
 from components.utils import auto_connect_mongodb
-
+from components.search_engine import SearchEngine
 
 # ===== 1. 全局样式加载 =====
 def local_css(file_name):
@@ -48,7 +48,8 @@ if "clustering_analyzer" not in st.session_state["components"]:
     st.session_state["components"]["clustering_analyzer"] = ClusteringAnalyzer()
 if "model_config" not in st.session_state or not isinstance(st.session_state["model_config"], dict):
     st.session_state["model_config"] = config_manager.get_model_config()
-
+if "search_engine" not in st.session_state["components"]:
+    st.session_state["components"]["search_engine"] = SearchEngine()
 
 
 # ===== 4. 自动加载模型（如配置开启） =====
