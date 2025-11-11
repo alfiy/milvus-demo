@@ -401,15 +401,15 @@ def milvus_mongo_upload(texts, vectors, metadata_list, milvus_dim=384, collectio
 
         milvus_ids = insert_batch(texts, vectors, metadata_list, collection, mongo_col)
 
-        st.success(f" 数据上传成功！")
-        st.success(f" Milvus: 插入 {len(milvus_ids):,} 条向量记录")
-        st.success(f" MongoDB: 插入 {len(milvus_ids):,} 条元数据记录")
+        st.success(f"🚀 数据上传成功！")
+        st.success(f"📥 Milvus: 插入 {len(milvus_ids):,} 条向量记录")
+        st.success(f"📥 MongoDB: 插入 {len(milvus_ids):,} 条元数据记录")
 
         return milvus_ids
 
     except Exception as e:
         st.error(f"❌ 数据上传失败: {e}")
-        st.info(" 请检查以下项目:")
+        st.info("⚠️ 请检查以下项目:")
         st.info("1. Milvus 数据库是否正常连接")
         st.info("2. MongoDB 数据库是否正常连接")  
         st.info("3. 数据格式是否正确")
