@@ -1,6 +1,6 @@
 {
   "milvus": {
-    "host": "localhost",
+    "host": "192.168.60.121",
     "port": "19530",
     "user": "",
     "password": "",
@@ -17,7 +17,7 @@
     "auto_connect": true
   },
   "model": {
-    "last_used_model": "models--BAAI--bge-m3",
+    "last_used_model": "models--sentence-transformers--all-MiniLM-L6-v2",
     "auto_load": true
   }
 }
