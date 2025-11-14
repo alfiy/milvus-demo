@@ -7,6 +7,10 @@ import time
 from dataclasses import dataclass
 from sklearn.preprocessing import normalize
 
+# ============================================================
+# 数据类和异常类
+# ============================================================
+
 @dataclass
 class SearchResult:
     """搜索结果数据类"""
@@ -44,6 +48,10 @@ class MongoQueryError(VectorSearchError):
     pass
 
 
+# ============================================================
+# 主搜索函数
+# ============================================================
+
 def vector_search(
     query: str,
     top_k: int,
@@ -55,7 +63,8 @@ def vector_search(
     output_fields: List[str] = None,
     nprobe: int = 10,
     timeout: float = 30.0,
-    enable_stats: bool = False
+    enable_stats: bool = False,
+    metric_type: str = "COSINE"  # 🎯 新增：支持配置指标类型
 ) -> List[Dict[str, Any]]:
     """
     优化后的向量+Mongo混合搜索功能
@@ -71,7 +80,8 @@ def vector_search(
         output_fields: 从MongoDB获取的字段列表
         nprobe: Milvus搜索的nprobe参数
         timeout: 搜索超时时间(秒)
-        enable_stats: 是否返回统计信息（会添加到每个结果的metadata中）
+        enable_stats: 是否返回统计信息（会添加到第一个结果的metadata中）
+        metric_type: 距离度量类型，默认"COSINE"
         
     Returns:
         结果列表，每个结果包含: id, score, text, metadata
@@ -100,7 +110,8 @@ def vector_search(
             output_fields=output_fields,
             nprobe=nprobe,
             timeout=timeout,
-            stats=stats
+            stats=stats,
+            metric_type=metric_type  # 🎯 传递metric_type
         )
         
         if not milvus_results:
@@ -139,6 +150,10 @@ def vector_search(
         raise VectorSearchError(f"搜索失败: {str(e)}") from e
 
 
+# ============================================================
+# 辅助函数
+# ============================================================
+
 def _validate_params(
     query: str,
     top_k: int,
@@ -169,14 +184,16 @@ def _validate_params(
 def _encode_query(query: str, vector_processor, stats: Optional[Dict]) -> List[float]:
     """向量化查询文本"""
     try:
-        if stats:
+        if stats is not None:
             encode_start = time.time()
         
         query_vector = vector_processor.encode([query])[0]
-        # 向量归一化 可以关闭，建议使用真实数据进行测试
+        
+        # 向量归一化（可选，根据实际需求决定是否使用）
+        # 注意：如果训练数据没有归一化，这里也不应该归一化
         query_vector = normalize([query_vector], axis=1)[0]
         
-        if stats:
+        if stats is not None:
             stats["encode_time"] = time.time() - encode_start
             stats["vector_dim"] = len(query_vector)
         
@@ -194,17 +211,43 @@ def _search_milvus(
     output_fields: List[str],
     nprobe: int,
     timeout: float,
-    stats: Optional[Dict]
+    stats: Optional[Dict],
+    metric_type: str = "COSINE"  # 🎯 新增参数
 ) -> List[Tuple[str, float]]:
-    """执行Milvus向量搜索"""
+    """
+    执行Milvus向量搜索
+    
+    Returns:
+        List[Tuple[str, float]]: (文档ID, 分数) 列表
+        - COSINE: 返回相似度 [0, 1]，1表示完全相同
+        - L2: 返回距离，越小越相似
+        - IP: 返回内积，越大越相似
+    """
     try:
-        if stats:
+        if stats is not None:
             milvus_start = time.time()
         
+        # 🎯 优化1：输入验证
+        if not query_vector:
+            raise ValueError("查询向量不能为空")
+        
+        if top_k <= 0:
+            raise ValueError(f"top_k必须大于0，当前值: {top_k}")
+        
+        # 🎯 优化2：使用传入的metric_type
         search_params = {
-            "metric_type": "COSINE",  # COSINE返回相似度(0-1)，值越大越相似
+            "metric_type": metric_type,
             "params": {"nprobe": nprobe}
         }
+        
+        # 🎯 优化3：记录搜索参数（便于调试）
+        if stats is not None:
+            stats["search_params"] = {
+                "metric_type": metric_type,
+                "nprobe": nprobe,
+                "top_k": top_k,
+                "vector_dim": len(query_vector)
+            }
         
         results = milvus_collection.search(
             data=[query_vector],
@@ -215,29 +258,172 @@ def _search_milvus(
             timeout=timeout
         )
         
-        if not results or not results[0]:
+        # 🎯 优化4：更详细的空结果检查
+        if not results:
+            logging.warning("Milvus返回空结果对象")
             return []
         
-        # 提取ID和分数，保持顺序
-        # milvus_results = [
-        #     (str(hit.id), float(hit.distance))  # 统一转为字符串ID
-        #     for hit in results[0]
-        # ]
-        metric = "COSINE"
-        milvus_results = [
-            (str(hit.id), 1 - float(hit.distance)) if metric == "COSINE" else (str(hit.id), float(hit.distance))
-            for hit in results[0]
-        ]
+        if not results[0]:
+            logging.warning("Milvus返回空搜索结果列表")
+            return []
         
-        if stats:
+        # 🎯 优化5：根据指标类型智能转换分数
+        milvus_results = _convert_scores(
+            hits=results[0],
+            metric_type=metric_type,
+            stats=stats
+        )
+        
+        # 🎯 优化6：记录更详细的统计信息
+        if stats is not None:
             stats["milvus_time"] = time.time() - milvus_start
             stats["milvus_count"] = len(milvus_results)
+            stats["milvus_metric"] = metric_type
+            
+            # 记录分数统计
+            if milvus_results:
+                scores = [score for _, score in milvus_results]
+                stats["score_stats"] = {
+                    "min": min(scores),
+                    "max": max(scores),
+                    "avg": sum(scores) / len(scores)
+                }
+        
+        # 🎯 优化7：记录搜索质量警告
+        if milvus_results:
+            _log_search_quality_warnings(milvus_results, metric_type, top_k)
         
         return milvus_results
         
+    except ValueError as e:
+        # 参数错误
+        logging.error(f"Milvus搜索参数错误: {e}")
+        raise MilvusSearchError(f"搜索参数无效: {str(e)}") from e
+        
     except Exception as e:
-        logging.error(f"Milvus搜索失败: {e}")
+        # 其他错误
+        logging.error(f"Milvus搜索失败: {e}", exc_info=True)
         raise MilvusSearchError(f"向量搜索失败: {str(e)}") from e
+
+
+def _convert_scores(
+    hits,
+    metric_type: str,
+    stats: Optional[Dict] = None
+) -> List[Tuple[str, float]]:
+    """
+    根据度量类型转换搜索结果的分数
+    
+    Args:
+        hits: Milvus搜索结果的hit对象列表
+        metric_type: 度量类型
+        stats: 统计信息字典（可选）
+        
+    Returns:
+        (ID, 转换后的分数) 元组列表
+        
+    Note:
+        不同度量类型的转换规则：
+        - COSINE: 转换为相似度 (1 - distance)，范围 [0, 1]，越大越相似
+        - L2: 保持距离值，范围 [0, ∞)，越小越相似
+        - IP: 保持内积值，范围 (-∞, ∞)，越大越相似
+    """
+    results = []
+    raw_distances = []
+    
+    for hit in hits:
+        hit_id = str(hit.id)  # 统一转为字符串ID
+        raw_distance = float(hit.distance)
+        raw_distances.append(raw_distance)
+        
+        # 根据指标类型转换分数
+        if metric_type == "COSINE":
+            # COSINE: 将距离转为相似度
+            score = 1.0 - raw_distance
+            # 处理浮点数精度问题，确保在 [0, 1] 范围内
+            score = max(0.0, min(1.0, score))
+        elif metric_type == "L2":
+            # L2: 保持距离值，越小越相似
+            score = raw_distance
+        elif metric_type == "IP":
+            # IP (内积): 保持原值，越大越相似
+            score = raw_distance
+        else:
+            # 其他未知指标：保持原值并记录警告
+            logging.warning(f"未知的度量类型: {metric_type}，使用原始距离值")
+            score = raw_distance
+        
+        results.append((hit_id, score))
+    
+    # 记录原始距离统计（用于调试）
+    if stats is not None and raw_distances:
+        stats["raw_distance_stats"] = {
+            "min": min(raw_distances),
+            "max": max(raw_distances),
+            "avg": sum(raw_distances) / len(raw_distances)
+        }
+    
+    return results
+
+
+def _log_search_quality_warnings(
+    results: List[Tuple[str, float]],
+    metric_type: str,
+    top_k: int
+) -> None:
+    """
+    记录搜索质量相关的警告信息
+    
+    Args:
+        results: 搜索结果列表
+        metric_type: 度量类型
+        top_k: 请求的结果数量
+    """
+    if not results:
+        return
+    
+    scores = [score for _, score in results]
+    
+    # 警告1：返回结果少于请求数量
+    if len(results) < top_k:
+        logging.warning(
+            f"返回结果数({len(results)})少于请求数({top_k})，"
+            f"可能是集合中数据不足"
+        )
+    
+    # 警告2：COSINE相似度都很低
+    if metric_type == "COSINE":
+        max_score = max(scores)
+        avg_score = sum(scores) / len(scores)
+        
+        if max_score < 0.3:
+            logging.warning(
+                f"最高相似度仅为{max_score:.3f}，建议检查："
+                "1) 查询文本是否合适 "
+                "2) 向量模型是否匹配 "
+                "3) 数据库中是否有相关内容"
+            )
+        elif avg_score < 0.2:
+            logging.warning(
+                f"平均相似度仅为{avg_score:.3f}，大部分结果可能不相关"
+            )
+    
+    # 警告3：L2距离都很大
+    elif metric_type == "L2":
+        min_distance = min(scores)
+        
+        if min_distance > 100:  # 阈值可调整
+            logging.warning(
+                f"最小L2距离为{min_distance:.2f}，所有结果可能都不相关"
+            )
+    
+    # 警告4：分数分布异常
+    score_range = max(scores) - min(scores)
+    if metric_type == "COSINE" and score_range < 0.01:
+        logging.warning(
+            f"相似度分数范围很小({score_range:.4f})，"
+            "可能表示查询向量质量问题或数据同质化严重"
+        )
 
 
 def _enrich_with_mongo(
@@ -249,7 +435,7 @@ def _enrich_with_mongo(
 ) -> List[SearchResult]:
     """用MongoDB数据丰富搜索结果"""
     try:
-        if stats:
+        if stats is not None:
             mongo_start = time.time()
         
         # 提取所有ID
@@ -391,7 +577,7 @@ def _enrich_with_mongo(
                     }
                 ))
         
-        if stats:
+        if stats is not None:
             stats["mongo_time"] = time.time() - mongo_start
             stats["mongo_found"] = len(docs)
             stats["mongo_missing"] = missing_count
@@ -422,7 +608,7 @@ def _apply_filter(
         # 距离: 值越小越相似，保留 <= threshold
         filtered = [r for r in results if r.score <= filter_threshold]
     
-    if stats:
+    if stats is not None:
         stats["before_filter"] = len(results)
         stats["after_filter"] = len(filtered)
         stats["filtered_out"] = len(results) - len(filtered)
@@ -430,14 +616,15 @@ def _apply_filter(
     return [r.to_dict() for r in filtered]
 
 
-# 自动MongoDB连接
+# ============================================================
+# MongoDB 辅助函数（保留原有功能）
+# ============================================================
+
 def auto_connect_mongodb(mongodb_config):
     """
     初始化 MongoDB 连接，返回三元组：(连接成功, 错误消息, client对象)
     外部调用无需直接写入 session_state，由主入口统一赋值可以防止覆盖。
     """
-    
-
     if not mongodb_config or not mongodb_config.get("host"):
         return False, "缺少 MongoDB 配置", None
 
@@ -462,7 +649,7 @@ def auto_connect_mongodb(mongodb_config):
     except Exception as e:
         return False, str(e), None
 
-# mongoDB状态
+
 def get_mongodb_stats(mongodb_client, mongodb_config):
     """
     统计MongoDB主业务集合的状态与数据量。
@@ -494,7 +681,6 @@ def get_mongodb_stats(mongodb_client, mongodb_config):
         # 检查向量字段
         vector_sample = col.find_one({"vector": {"$exists": True}}, {"vector": 1})
         if vector_sample and vector_sample.get("vector") is not None:
-            import numpy as np
             sample_vector = np.array(vector_sample["vector"])
             stats["vector_info"] = sample_vector.shape[0] if sample_vector.ndim > 0 else "N/A"
             stats["vector_size"] = sample_vector.nbytes / 1024 / 1024
@@ -539,4 +725,3 @@ def get_mongodb_data(mongodb_config):
     except Exception as e:
         results["error"] = str(e)
     return results
-

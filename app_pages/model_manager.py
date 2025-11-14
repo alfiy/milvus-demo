@@ -58,7 +58,7 @@ def model_manager_page():
     )
     if st.button("下载模型"):
         if new_model_name:
-            with st.spinner("正在下载模型..."):
+            with st.spinner("正在下载模型请勿刷新或离开本页面..."):
                 ok, msg = vp.download_model(new_model_name, log_callback=lambda l: st.info(l))
                 if ok:
                     st.success(msg)

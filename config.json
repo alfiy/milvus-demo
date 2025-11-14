@@ -17,7 +17,7 @@
     "auto_connect": true
   },
   "model": {
-    "last_used_model": "models--sentence-transformers--all-MiniLM-L6-v2",
+    "last_used_model": "models--BAAI--bge-large-zh-v1.5",
     "auto_load": true
   }
 }

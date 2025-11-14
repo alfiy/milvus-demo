@@ -74,7 +74,8 @@ def search_page():
         
         # 获取向量处理器
         vector_processor = st.session_state.components["vector_processor"]
-        
+
+
     except Exception as e:
         st.error(f"❌ 初始化搜索组件失败: {e}")
         st.info("📌 请确保 Milvus 和 MongoDB 都已正确配置和连接")
@@ -126,6 +127,8 @@ def search_page():
                     output_fields=["text", "metadata"],
                     enable_stats=enable_stats
                 )
+
+                results = sorted(results, key=lambda x: x.get("score", 0), reverse=True)
                 
                 # 提取搜索统计（如果启用）
                 search_stats = None
